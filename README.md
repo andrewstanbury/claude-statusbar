@@ -111,6 +111,8 @@ Defaults match Sonnet 4.x rates. Adjust to match the model you use most.
 
 The advice thresholds (when to suggest `/compact`, `commit`, etc.) live further down in the **Recommendation** section — tweak the score gates to taste.
 
+For the full list of tunables (including price tables for Opus/Haiku, ANSI colour overrides, and manual-test env vars) see [`docs/reference/config.reference.md`](./docs/reference/config.reference.md).
+
 ---
 
 ## Uninstall
