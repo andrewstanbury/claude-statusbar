@@ -1,6 +1,6 @@
 # AGENTS.md — codebase context for AI agents
 
-Tiny standalone repo. One bash script, one installer, one README. Not part of the Flexion Labs family of repos but lives in the same parent directory.
+Tiny standalone repo. One bash script, one installer, one README.
 
 ## What it is
 
