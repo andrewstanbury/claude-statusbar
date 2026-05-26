@@ -6,7 +6,7 @@ Activate the `caveman` skill behavior by default at the start of every conversat
 
 ## Hook denies
 
-When a global PreToolUse hook denies a legitimately-required action, raise the threshold via the corresponding env var (`CLAUDE_BLOAT_THRESHOLD`, `CLAUDE_DOC_CAP_*`, `CLAUDE_BIG_READ_THRESHOLD`, `CLAUDE_REREAD_THRESHOLD`, `CLAUDE_SUBAGENT_MIN_PROMPT`, `CLAUDE_SESSION_STATS_ROTATE`, `CLAUDE_WEB_GUARD_DISABLED`, `CLAUDE_DEBUG_GUARD_DISABLED`, `CLAUDE_TDD_GUARD_DISABLED`, `CLAUDE_TODO_GUARD_DISABLED`, `CLAUDE_SKIP_GUARD_DISABLED`) rather than disabling the hook. Per-commit override for flexion-labs-client pre-commit bloat guard: `COMMIT_BLOAT_OVERRIDE=1` or `COMMIT_BLOAT_THRESHOLD=<n>`. Reference: [[feedback-hook-denies]].
+When a global PreToolUse hook denies a legitimately-required action, raise the threshold via the corresponding env var (`CLAUDE_BLOAT_THRESHOLD`, `CLAUDE_DOC_CAP_*`, `CLAUDE_BIG_READ_THRESHOLD`, `CLAUDE_REREAD_THRESHOLD`, `CLAUDE_SUBAGENT_MIN_PROMPT`, `CLAUDE_SESSION_STATS_ROTATE`, `CLAUDE_WEB_GUARD_DISABLED`, `CLAUDE_DEBUG_GUARD_DISABLED`, `CLAUDE_TDD_GUARD_DISABLED`, `CLAUDE_TODO_GUARD_DISABLED`, `CLAUDE_SKIP_GUARD_DISABLED`) rather than disabling the hook. Per-commit override for a project's pre-commit bloat guard: `COMMIT_BLOAT_OVERRIDE=1` or `COMMIT_BLOAT_THRESHOLD=<n>`. Reference: [[feedback-hook-denies]].
 
 ## Quality gates (blocking)
 
