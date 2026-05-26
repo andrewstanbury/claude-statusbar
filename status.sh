@@ -12,14 +12,14 @@
 #   3. Context       % + bar (8-cell mini bar)
 #   4. Tokens        ↑in ↓out (estimated 65/35 split)
 #   5. Cost · Time   real cost from stdin; session elapsed
-#   6. Repo          Branch[⎇] · PR · Dirty · Unpushed · Behind · Base↑↓ · Lines · Stash · EAS
+#   6. Repo          Branch[⎇] · PR · Web · Dirty · Unpushed · Behind · Base↑↓ · Lines · Stash · EAS
 #   7. Model         · Mode (non-default) · Style (non-default)
-#   8. System        Memory · Battery
+#   8. System        Memory
 #
 # Install:
 #   { "statusLine": { "type": "command", "command": "bash ~/.claude/status.sh" } }
 #
-# Requires: bash 4+, jq. Optional: git, gh, free, /sys/class/power_supply/BAT*.
+# Requires: bash 4+, jq. Optional: git, gh, free.
 # Honors NO_COLOR and TERM=dumb (emits plain text).
 
 # ── Tunables ─────────────────────────────────────────────────────────────────
@@ -30,7 +30,6 @@ CTX_WARN=50; CTX_HIGH=75; CTX_CRIT=90
 DIRTY_WARN=5;  DIRTY_HIGH=10; DIRTY_CRIT=20
 PUSH_WARN=5;   PUSH_HIGH=10
 MEM_CRIT=90
-BAT_CRIT=15
 NARROW_COLS=110
 PR_CACHE_TTL=300           # seconds before background PR refresh
 
@@ -182,7 +181,7 @@ SESSION_STR=""; SESSION_MS_INT="${SESSION_MS%.*}"
 REPO_ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)
 BRANCH_NAME=""; DIRTY=0; UNPUSHED=0; TO_PULL=0; CONFLICTS=0
 AHEAD_BASE=0; BEHIND_BASE=0; BRANCH_LINES=0; STASH_COUNT=0
-WORKTREE_MARK=""; PR_NUM=""; EAS_HINT=""
+WORKTREE_MARK=""; PR_NUM=""; EAS_HINT=""; WEB_ISSUES=0
 
 if [ -n "$REPO_ROOT" ]; then
   # branch + upstream ahead/behind + porcelain file list in one call
@@ -241,6 +240,31 @@ if [ -n "$REPO_ROOT" ]; then
   # EAS/Expo project (has eas.json): hint to prefix `eas update` with EXPO_GO=1
   # so the OTA payload loads in Expo Go.
   [ -f "$REPO_ROOT/eas.json" ] && EAS_HINT="EXPO_GO=1"
+
+  # Web-quality degradation: when active-branch work touches web files that now
+  # carry web-standards violations, count them (reuses shared doc-level checks).
+  if [ "$AHEAD_BASE" -gt 0 ] || [ "$DIRTY" -gt 0 ]; then
+    WS_LIB=""
+    for c in "$HOME/.claude/hooks/lib/web-standards-checks.sh" \
+             "$(dirname "${BASH_SOURCE[0]}")/claude/hooks/lib/web-standards-checks.sh"; do
+      [ -f "$c" ] && { WS_LIB="$c"; break; }
+    done
+    if [ -n "$WS_LIB" ]; then
+      . "$WS_LIB" 2>/dev/null
+      web_files=$( {
+        [ -n "$BASE" ] && git -C "$REPO_ROOT" diff --name-only "$BASE"...HEAD 2>/dev/null
+        git -C "$REPO_ROOT" diff --name-only HEAD 2>/dev/null
+        git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>/dev/null
+      } | grep -iE '\.(html?|vue|svelte|astro)$' | sort -u | head -25 )
+      if [ -n "$web_files" ] && declare -f ws_doc_findings >/dev/null 2>&1; then
+        while IFS= read -r wf; do
+          [ -n "$wf" ] && [ -f "$REPO_ROOT/$wf" ] || continue
+          n=$(ws_doc_findings "$(tr '\n\t' '  ' < "$REPO_ROOT/$wf")" | grep -oF '•' | wc -l | tr -d ' ')
+          WEB_ISSUES=$(( WEB_ISSUES + ${n:-0} ))
+        done <<< "$web_files"
+      fi
+    fi
+  fi
 fi
 
 DIRTY_COL=$(pct_color $(( DIRTY * 5  > 100 ? 100 : DIRTY * 5  )))
@@ -255,21 +279,6 @@ if command -v free &>/dev/null; then
   if [ "${mtotal:-0}" -gt 0 ]; then MEM_PCT=$(( mused * 100 / mtotal )); MEM_STR="${MEM_PCT}%"; fi
 fi
 MEM_COL=$(pct_color "$MEM_PCT")
-
-BAT_PCT=""; BAT_CHARGING=""
-for b in /sys/class/power_supply/BAT*; do
-  [ -r "$b/capacity" ] || continue
-  read -r BAT_PCT < "$b/capacity" 2>/dev/null
-  read -r BAT_STATUS < "$b/status" 2>/dev/null
-  [ "$BAT_STATUS" = "Charging" ] && BAT_CHARGING="+"
-  break
-done
-BAT_COL="$G"
-if [ -n "$BAT_PCT" ]; then
-  if   [ "$BAT_PCT" -lt 20 ]; then BAT_COL="$R"
-  elif [ "$BAT_PCT" -lt 40 ]; then BAT_COL="$Y"
-  fi
-fi
 
 # ── Advice (severity-scored; highest wins) ───────────────────────────────────
 ADVICE=""; ADVICE_SCORE=0; ADVICE_COL="$G"
@@ -291,8 +300,7 @@ fi
 [ "$CONFLICTS" -gt 0 ]                                    && set_advice 95 "resolve conflicts" "${R}${B}"
 [ "$TO_PULL" -ge 1 ]                                      && set_advice 30 "git pull" "$Y"
 [ "$MEM_PCT" -ge "$MEM_CRIT" ]                            && set_advice 85 "free memory" "$R"
-[ -n "$BAT_PCT" ] && [ -z "$BAT_CHARGING" ] && \
-  [ "$BAT_PCT" -lt "$BAT_CRIT" ]                          && set_advice 90 "plug in (battery <${BAT_CRIT}%)" "$R"
+[ "$WEB_ISSUES" -gt 0 ]                                  && set_advice 78 "fix web a11y/SEO (${WEB_ISSUES})" "$R"
 
 # ── Verdict beacon (worst severity across all axes) ──────────────────────────
 WORST=0
@@ -300,6 +308,7 @@ for s in "$CTX_PCT" "$COST_PCT" $((DIRTY*5)) $((UNPUSHED*10)) "$MEM_PCT"; do
   [ "$s" -gt "$WORST" ] && WORST=$s
 done
 [ "$CONFLICTS" -gt 0 ] && WORST=100
+[ "$WEB_ISSUES" -gt 0 ] && [ "$WORST" -lt 80 ] && WORST=80
 [ "$WORST" -gt 100 ] && WORST=100
 if   [ "$WORST" -ge 90 ]; then VERDICT_COL="$R"; VERDICT_TAG="critical"
 elif [ "$WORST" -ge 75 ]; then VERDICT_COL="$Y"; VERDICT_TAG="high"
@@ -332,6 +341,7 @@ printf "${GSEP}"
 if [ -n "$REPO_ROOT" ]; then
   printf "${D}Branch:${X} ${C}${WORKTREE_MARK}${B}%s${X}" "$BRANCH_NAME"
   [ -n "$PR_NUM" ] && printf " ${D}PR:${X} ${C}${B}%s${X}" "$PR_NUM"
+  [ "$WEB_ISSUES" -gt 0 ] && printf " ${D}Web:${X} ${R}${B}⚠ %d${X}" "$WEB_ISSUES"
   printf " ${D}Dirty:${X}";    fmt_count "$DIRTY"    "$DIRTY_COL"
   printf " ${D}Unpushed:${X}"; fmt_count "$UNPUSHED" "$PUSH_COL"
   [ "$TO_PULL" -gt 0 ] && { printf " ${D}Behind:${X}"; fmt_count "$TO_PULL" "$PULL_COL"; }
@@ -356,16 +366,7 @@ if [ -n "$OUT_STYLE" ] && [ "$OUT_STYLE" != "default" ]; then
 fi
 printf "${GSEP}"
 
-# 8) System (Memory · Battery). Battery hidden when 100% & charging.
+# 8) System (Memory)
 if [ -n "$MEM_STR" ]; then printf "${D}Memory:${X} ${MEM_COL}${B}%s${X}" "$MEM_STR"; fi
-if [ -n "$BAT_PCT" ]; then
-  SHOW_BAT=1
-  { [ "$BAT_PCT" = "100" ] && [ -n "$BAT_CHARGING" ]; } && SHOW_BAT=0
-  [ "$NARROW" -eq 1 ] && [ "$BAT_PCT" -ge 40 ] && [ -n "$BAT_CHARGING" ] && SHOW_BAT=0
-  if [ "$SHOW_BAT" -eq 1 ]; then
-    [ -n "$MEM_STR" ] && printf " "
-    printf "${D}Battery:${X} ${BAT_COL}${B}%s%s%%${X}" "$BAT_CHARGING" "$BAT_PCT"
-  fi
-fi
 
 printf '\n'
