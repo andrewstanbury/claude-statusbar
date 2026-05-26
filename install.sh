@@ -119,7 +119,7 @@ BASE='{}'
 
 STATUSLINE='null'
 case " ${SELECTED[*]} " in *" statusbar "*)
-  STATUSLINE='{"statusLine":{"type":"command","command":"bash $HOME/.claude/status.sh","refreshInterval":10}}' ;;
+  STATUSLINE='{"statusLine":{"type":"command","command":"bash $HOME/.claude/status.sh","refreshInterval":1}}' ;;
 esac
 
 specs=""

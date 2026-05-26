@@ -7,7 +7,7 @@
 # "quiet" state. Narrow terminals (<NARROW_COLS) shed low-priority sections.
 #
 # Column groups (left → right):
-#   1. ●verdict      worst severity across context/cost/dirty/unpushed/mem
+#   1. ⠿ spinner+verdict   worst severity across context/cost/dirty/unpushed/mem
 #   2. advice        single highest-priority imperative (only when active)
 #   3. Context       % + bar (8-cell mini bar)
 #   4. Tokens        ↑in ↓out (estimated 65/35 split)
@@ -317,8 +317,12 @@ else                           VERDICT_COL="$G"; VERDICT_TAG="ok"
 fi
 
 # ── Render ───────────────────────────────────────────────────────────────────
-# 1) Verdict beacon
-printf "${VERDICT_COL}${B}●${X} ${VERDICT_COL}%s${X}${GSEP}" "$VERDICT_TAG"
+# 1) Verdict beacon — animated braille spinner. The frame is keyed to the wall
+#    clock so it advances once per render (cadence = statusLine refreshInterval);
+#    colour still encodes the worst severity (ok/medium/high/critical).
+SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+BEACON="${SPIN[$(( $(date +%s) % ${#SPIN[@]} ))]}"
+printf "${VERDICT_COL}${B}%s${X} ${VERDICT_COL}%s${X}${GSEP}" "$BEACON" "$VERDICT_TAG"
 
 # 2) Advice (when active)
 [ -n "$ADVICE" ] && printf "${ADVICE_COL}${B}%s${X}${GSEP}" "$ADVICE"
