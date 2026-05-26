@@ -6,11 +6,13 @@ Activate the `caveman` skill behavior by default at the start of every conversat
 
 ## Hook denies
 
-When a global PreToolUse hook denies a legitimately-required action, raise the threshold via the corresponding env var (`CLAUDE_BLOAT_THRESHOLD`, `CLAUDE_DOC_CAP_*`, `CLAUDE_BIG_READ_THRESHOLD`, `CLAUDE_REREAD_THRESHOLD`, `CLAUDE_SUBAGENT_MIN_PROMPT`, `CLAUDE_SESSION_STATS_ROTATE`, `CLAUDE_WEB_GUARD_DISABLED`, `CLAUDE_DEBUG_GUARD_DISABLED`, `CLAUDE_TDD_GUARD_DISABLED`, `CLAUDE_TODO_GUARD_DISABLED`, `CLAUDE_SKIP_GUARD_DISABLED`) rather than disabling the hook. Per-commit override for a project's pre-commit bloat guard: `COMMIT_BLOAT_OVERRIDE=1` or `COMMIT_BLOAT_THRESHOLD=<n>`. Reference: [[feedback-hook-denies]].
+When a global PreToolUse hook denies a legitimately-required action, raise the threshold via the corresponding env var (`CLAUDE_BLOAT_THRESHOLD`, `CLAUDE_DOC_CAP_*`, `CLAUDE_BIG_READ_THRESHOLD`, `CLAUDE_REREAD_THRESHOLD`, `CLAUDE_SUBAGENT_MIN_PROMPT`, `CLAUDE_SESSION_STATS_ROTATE`, `CLAUDE_WEB_GUARD_DISABLED`, `CLAUDE_DEBUG_GUARD_DISABLED`, `CLAUDE_TDD_GUARD_DISABLED`, `CLAUDE_TODO_GUARD_DISABLED`, `CLAUDE_SKIP_GUARD_DISABLED`, `CLAUDE_DEADCODE_DISABLED`) rather than disabling the hook. Per-commit override for a project's pre-commit bloat guard: `COMMIT_BLOAT_OVERRIDE=1` or `COMMIT_BLOAT_THRESHOLD=<n>`. Reference: [[feedback-hook-denies]].
 
 ## Quality gates (blocking)
 
 `quality-guard.sh` (PreToolUse) hard-blocks: debug code (`console.log`/`console.debug`/`debugger`/global `alert(`) in app code; **any** `/components/*.tsx` (new OR existing) with no co-located test (test-first); an untracked `TODO/FIXME/HACK/XXX` (needs an `(owner, date)` tag); a skipped test (`.skip`/`xit`/`xdescribe`/`t.Skip`) with no expiry marker. The debug/TODO/skip checks are introduce-only (inspect just the edit's new content); the test check is file-level (blocks until a sibling test exists). Each has the override env var listed above. Reference: [[feedback-quality-gates]].
+
+`deadcode.sh` (one script, two modes) keeps LOC matched to real complexity: **pre** blocks introducing a commented-out code block; **post** is threshold-gated (silent under `CLAUDE_DEADCODE_MIN_LOC`, default 150 LOC) and on substantial app files runs static checks + the project's own ESLint — tool-confirmed unused imports/vars → `decision:block`, commented-out code / heavy line duplication → recommendation. Zero token cost (static + local tools). Override `CLAUDE_DEADCODE_DISABLED=1`.
 
 ## Web quality standards
 
