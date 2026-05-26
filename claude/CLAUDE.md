@@ -4,6 +4,10 @@
 
 Activate the `caveman` skill behavior by default at the start of every conversation, in every project. Use ultra-terse caveman style (drop articles, filler, pleasantries; keep technical substance exact). Persist across all turns. Disable only when user says "stop caveman" or "normal mode".
 
+## Confirm intent before executing
+
+`confirm-intent.sh` (UserPromptSubmit) injects a reminder on every submitted prompt: before doing anything, restate in one or two terse lines what the request is understood to be asking, and do NOT start executing yet. If the prompt has more than one plausible interpretation, present the options via `AskUserQuestion` (multiple choice) or ask focused follow-up questions — never assume on the user's behalf. Begin the work only after the user confirms. Exception: a prompt that is itself a direct confirmation/answer to a prior clarifying question is treated as confirmed and proceeds without re-echoing. Skips slash-commands (`/foo`) and bang-shell (`!cmd`) lines. Override `CLAUDE_INTENT_CONFIRM_DISABLED=1`.
+
 ## Hook denies
 
 When a global PreToolUse hook denies a legitimately-required action, raise the threshold via the corresponding env var (`CLAUDE_BLOAT_THRESHOLD`, `CLAUDE_DOC_CAP_*`, `CLAUDE_BIG_READ_THRESHOLD`, `CLAUDE_REREAD_THRESHOLD`, `CLAUDE_SUBAGENT_MIN_PROMPT`, `CLAUDE_SESSION_STATS_ROTATE`, `CLAUDE_WEB_GUARD_DISABLED`, `CLAUDE_DEBUG_GUARD_DISABLED`, `CLAUDE_TDD_GUARD_DISABLED`, `CLAUDE_TODO_GUARD_DISABLED`, `CLAUDE_SKIP_GUARD_DISABLED`, `CLAUDE_DEADCODE_DISABLED`) rather than disabling the hook. Per-commit override for a project's pre-commit bloat guard: `COMMIT_BLOAT_OVERRIDE=1` or `COMMIT_BLOAT_THRESHOLD=<n>`. Reference: [[feedback-hook-denies]].
