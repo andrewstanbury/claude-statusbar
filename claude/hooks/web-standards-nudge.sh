@@ -13,6 +13,9 @@ set -euo pipefail
 
 [ "${CLAUDE_WEB_NUDGE_DISABLED:-0}" = "1" ] && exit 0
 
+# shellcheck source=/dev/null
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/web-standards-checks.sh"
+
 payload="$(cat)"
 file_path="$(printf '%s' "$payload" | jq -r '.tool_input.file_path // .tool_response.filePath // empty')"
 [ -z "$file_path" ] && exit 0
@@ -27,24 +30,8 @@ case "$file_path" in
 esac
 
 flat="$(tr '\n\t' '  ' < "$file_path")"
-warns=""
-
-# Whole-document checks only when this is a full HTML document.
-if printf '%s' "$flat" | grep -qiE '<html'; then
-  printf '%s' "$flat" | grep -qiE '<html[^>]*[[:space:]]lang=' || warns="${warns}\n  • <html> has no lang attribute (a11y/SEO)"
-  printf '%s' "$flat" | grep -qiE '<title>[^<]' || warns="${warns}\n  • no non-empty <title> (SEO)"
-  printf '%s' "$flat" | grep -qiE '<meta[^>]+name="description"' || warns="${warns}\n  • no <meta name=\"description\"> (SEO)"
-fi
-
-# More than one <h1> (case-sensitive tag).
-h1=$(printf '%s' "$flat" | grep -oE '<h1[ >]' | wc -l | tr -d ' ' || true)
-[ "${h1:-0}" -gt 1 ] && warns="${warns}\n  • ${h1} <h1> headings — use one per page (SEO/structure)"
-
-# Click handler on a non-interactive element with no role.
-if printf '%s' "$flat" | grep -qE '<(div|span)[^>]*[[:space:]]on[Cc]lick' \
-   && ! printf '%s' "$flat" | grep -qE '<(div|span)[^>]*[[:space:]]on[Cc]lick[^>]*role='; then
-  warns="${warns}\n  • clickable <div>/<span> with no role — prefer <button> for keyboard/a11y"
-fi
+# Shared document-level SEO/a11y checks — see lib/web-standards-checks.sh.
+warns="$(ws_doc_findings "$flat")"
 
 [ -z "$warns" ] && exit 0
 

@@ -140,52 +140,14 @@ if [ -n "$session_id" ]; then
     '{ts:$ts, session_id:$sid, cwd:$cwd, turns:$turns, input:$input, output:$output, cache_read:$cread, cache_write:$cwrite, hit_pct:$hit_pct, top_read_bytes:$top_reads, tools:$tools}')"
 
   tmp="${stats_log}.tmp.$$"
-  if [ -f "$stats_log" ]; then
-    # Keep only the LAST entry per session_id (other sessions), drop our
-    # session_id's prior entries — `$new_line` replaces them. AWK keeps
-    # final-occurrence semantics across the file.
-    awk -v sid="$session_id" '
-      {
-        # Naive session_id extraction — matches `"session_id":"<sid>"`.
-        match($0, /"session_id":"[^"]*"/)
-        if (RSTART > 0) {
-          curr = substr($0, RSTART+14, RLENGTH-15)
-        } else {
-          curr = ""
-        }
-        if (curr == sid) next            # drop our prior entries
-        line_by_sid[curr] = $0
-        order[++n] = curr
-      }
-      END {
-        seen[""] = 0
-        for (i = 1; i <= n; i++) {
-          k = order[i]
-          if (k != "" && !(k in seen)) {
-            seen[k] = 1
-          }
-        }
-        # Emit in original first-seen order but with the final value.
-        for (i = 1; i <= n; i++) {
-          k = order[i]
-          if (k != "" && k in line_by_sid) {
-            print line_by_sid[k]
-            delete line_by_sid[k]
-          }
-        }
-      }
-    ' "$stats_log" > "$tmp" 2>/dev/null || cp "$stats_log" "$tmp"
-  else
-    : > "$tmp"
-  fi
-  printf '%s\n' "$new_line" >> "$tmp"
-
-  # Rotate if too long: keep only the last $ROTATE_AT lines.
-  total=$(wc -l < "$tmp" 2>/dev/null || echo 0)
-  if [ "$total" -gt "$ROTATE_AT" ]; then
-    tail -n "$ROTATE_AT" "$tmp" > "${tmp}.2" && mv "${tmp}.2" "$tmp"
-  fi
-  mv -f "$tmp" "$stats_log" 2>/dev/null || rm -f "$tmp"
+  # One entry per session_id (last-wins; this session's $new_line replaces its
+  # own prior entries), keeping the most-recent $ROTATE_AT by timestamp. jq does
+  # the dedupe; `-R fromjson? // empty` tolerates any malformed legacy lines.
+  { [ -f "$stats_log" ] && cat "$stats_log"; printf '%s\n' "$new_line"; } \
+    | jq -c -R 'fromjson? // empty' \
+    | jq -s -c 'group_by(.session_id) | map(.[-1]) | sort_by(.ts) | .[]' \
+    | tail -n "$ROTATE_AT" > "$tmp" 2>/dev/null \
+    && mv -f "$tmp" "$stats_log" || rm -f "$tmp"
 fi
 
 # Cleanup orphaned re-read logs from old sessions. The current session's

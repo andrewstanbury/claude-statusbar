@@ -60,9 +60,11 @@ while IFS= read -r seg; do
   fi
 
   # ─── search-noise: find . without prune ───────────────────────────────
+  # -maxdepth bounds the walk (e.g. -maxdepth 1 = no recursion), so excludes
+  # aren't needed — exempt it.
   if printf '%s' "$seg" | grep -qE '^find([[:space:]]|$)'; then
     if ! printf '%s' "$seg" | grep -qE '(node_modules|/dist/|/build/|\.next|\.expo|\.git/|coverage|vendor)' \
-       && ! printf '%s' "$seg" | grep -qE -- '(-prune|-not[[:space:]]+-path)'; then
+       && ! printf '%s' "$seg" | grep -qE -- '(-prune|-not[[:space:]]+-path|-maxdepth)'; then
       deny "Recursive find without excluding generated dirs — burns tokens on irrelevant matches. Rewrite: find . -type f -not -path \"*/node_modules/*\" -not -path \"*/dist/*\" -not -path \"*/.next/*\" -not -path \"*/.expo/*\" -not -path \"*/.git/*\" ..."
     fi
   fi
