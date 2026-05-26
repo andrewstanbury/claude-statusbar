@@ -115,6 +115,31 @@ For the full list of tunables (including price tables for Opus/Haiku, ANSI colou
 
 ---
 
+## Portable Claude config
+
+The [`claude/`](./claude) directory is a portable bundle of global Claude Code customizations, so a freshly-formatted machine can be brought back to the same setup with one command:
+
+```bash
+git clone https://github.com/andrewstanbury/claude-statusbar.git
+bash claude-statusbar/claude/install.sh
+```
+
+`install.sh` **symlinks** the bundle into `~/.claude` (backing up any existing files to `*.bak`), so the repo stays the source of truth — edits you make live in `~/.claude` flow back here through the links. It's idempotent; re-run any time. If a tool ever replaces a symlink with a regular file, just re-run it.
+
+What's included:
+
+| Bundle path | Linked to | What it is |
+|---|---|---|
+| `claude/settings.json` | `~/.claude/settings.json` | permissions, theme, status line, hook wiring |
+| `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | global instructions |
+| `claude/hooks/*.sh` | `~/.claude/hooks/` | quality/bloat/web-standards guards + nudges |
+| `claude/skills/<name>` | `~/.claude/skills/` | custom skills |
+| `status.sh` | `~/.claude/status.sh` | this status bar |
+
+> This repo is **public**, so it deliberately contains no secrets and no project-specific/proprietary agents — those stay local-only (see `.gitignore`).
+
+---
+
 ## Uninstall
 
 ```bash
