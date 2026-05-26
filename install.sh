@@ -49,10 +49,12 @@ fi
 if [ -z "$SRC" ]; then
   CACHE="${CSB_CACHE:-$HOME/.cache/claude-statusbar}"
   if [ -d "$CACHE/.git" ]; then git -C "$CACHE" pull --ff-only -q 2>/dev/null || true
-  else mkdir -p "$(dirname "$CACHE")"; git clone -q --depth 1 "$REPO_URL" "$CACHE" || die "clone failed: $REPO_URL"; fi
+  else mkdir -p "$(dirname "$CACHE")"; git clone -q "$REPO_URL" "$CACHE" || die "clone failed: $REPO_URL"; fi
   SRC="$CACHE"
 fi
 [ -f "$SRC/claude/components.sh" ] || die "components.sh not found under $SRC"
+# Keep-to-latest: when updating from a real clone, pull before composing.
+[ "$MODE" = update ] && [ -d "$SRC/.git" ] && git -C "$SRC" pull --ff-only -q 2>/dev/null || true
 # shellcheck source=/dev/null
 . "$SRC/claude/components.sh"
 
@@ -107,7 +109,7 @@ link() {  # link <src-abs> <dest-abs>
 for c in "${SELECTED[@]}"; do
   for p in ${COMPONENT_PATHS[$c]}; do
     [ -e "$SRC/$p" ] || { warn "missing in repo: $p"; continue; }
-    case "$p" in *.sh) chmod +x "$SRC/$p" 2>/dev/null || true ;; esac
+    case "$p" in */lib/*) ;; *.sh) chmod +x "$SRC/$p" 2>/dev/null || true ;; esac
     link "$SRC/$p" "$CLAUDE_DIR/${p#claude/}"
   done
   ok "linked: ${COMPONENT_LABEL[$c]}"
