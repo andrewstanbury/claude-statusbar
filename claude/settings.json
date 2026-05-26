@@ -132,6 +132,11 @@
             "type": "command",
             "command": "bash $HOME/.claude/hooks/deadcode.sh post",
             "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/stack-lint.sh",
+            "timeout": 45
           }
         ]
       }
