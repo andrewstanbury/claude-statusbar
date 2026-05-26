@@ -104,16 +104,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash $HOME/.claude/hooks/test-coexistence-nudge.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
-            "command": "bash $HOME/.claude/hooks/post-edit-debt-nudges.sh",
-            "timeout": 5
-          },
-          {
-            "type": "command",
             "command": "bash $HOME/.claude/hooks/web-standards-nudge.sh",
             "timeout": 5
           }
