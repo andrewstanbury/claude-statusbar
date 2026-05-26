@@ -15,6 +15,9 @@ set -euo pipefail
 
 [ "${CLAUDE_WEB_GUARD_DISABLED:-0}" = "1" ] && exit 0
 
+# shellcheck source=/dev/null
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/web-standards-checks.sh"
+
 payload="$(cat)"
 file_path="$(printf '%s' "$payload" | jq -r '.tool_input.file_path // empty')"
 [ -z "$file_path" ] && exit 0
@@ -53,25 +56,9 @@ if printf '%s' "$content" | grep -qE '<button[ >][^>]*>[^<]*<button[ >]'; then
   errors="${errors}\n  • nested <button> inside <button> (invalid)"
 fi
 
-# Document-level SEO essentials — only when this edit writes a FULL HTML document
-# (content contains <html>), so HTML fragments / JSX components are never flagged.
-if printf '%s' "$flat" | grep -qiE '<html'; then
-  printf '%s' "$flat" | grep -qiE '<html[^>]*[[:space:]]lang=' || errors="${errors}\n  • <html> has no lang attribute (a11y/SEO)"
-  printf '%s' "$flat" | grep -qiE '<title>[^<]'                || errors="${errors}\n  • no non-empty <title> (SEO)"
-  printf '%s' "$flat" | grep -qiE '<meta[^>]+name="description"' || errors="${errors}\n  • no <meta name=\"description\"> (SEO)"
-fi
-
-# More than one <h1> introduced by THIS edit (case-sensitive → ignores RN/components).
-h1=$(printf '%s' "$flat" | grep -oE '<h1[ >]' | wc -l | tr -d ' ' || true)
-if [ "${h1:-0}" -gt 1 ]; then
-  errors="${errors}\n  • ${h1} <h1> headings in one edit — use a single <h1> per page (SEO/structure)"
-fi
-
-# Click handler on a non-interactive element with no role (introduce-only).
-if printf '%s' "$content" | grep -qE '<(div|span)[^>]*[[:space:]]on[Cc]lick' \
-   && ! printf '%s' "$content" | grep -qE '<(div|span)[^>]*[[:space:]]on[Cc]lick[^>]*role='; then
-  errors="${errors}\n  • clickable <div>/<span> with no role — use <button> for keyboard/a11y"
-fi
+# Shared document-level SEO/a11y checks (full-<html> lang/title/meta, 2+ <h1>,
+# clickable <div>/<span> without role) — see lib/web-standards-checks.sh.
+errors="${errors}$(ws_doc_findings "$flat")"
 
 [ -z "$errors" ] && exit 0
 
