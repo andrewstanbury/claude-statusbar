@@ -21,8 +21,8 @@
 #   claude/skills/<name>   → ~/.claude/skills/<name>
 #   status.sh (repo root)  → ~/.claude/status.sh
 #
-# NOTE: project-specific agents (e.g. Flexion ones) are intentionally NOT kept in
-# this public repo, so they are not restored here — add them back by hand.
+# NOTE: project-specific agents are intentionally NOT kept in this public repo,
+# so they are not restored here — add them back by hand.
 #
 # Requirements: bash 4+. Restart Claude Code (or run /config) afterwards.
 # ─────────────────────────────────────────────────────────────────────────────

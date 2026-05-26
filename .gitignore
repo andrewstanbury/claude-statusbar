@@ -3,5 +3,5 @@
 .DS_Store
 
 # Safety guard: this repo is PUBLIC. Project-specific / proprietary agents
-# (e.g. Flexion ones) must never be committed here — keep them local-only.
+# must never be committed here — keep them local-only.
 claude/agents/
