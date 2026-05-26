@@ -241,29 +241,41 @@ if [ -n "$REPO_ROOT" ]; then
   # so the OTA payload loads in Expo Go.
   [ -f "$REPO_ROOT/eas.json" ] && EAS_HINT="EXPO_GO=1"
 
-  # Web-quality degradation: when active-branch work touches web files that now
-  # carry web-standards violations, count them (reuses shared doc-level checks).
+  # Web-quality degradation — cached + background-refreshed (like the PR check)
+  # so a 1s statusLine refresh never rescans web files on the hot path. Counts
+  # web-standards violations in web files the active branch has touched.
+  WEB_CACHE="/tmp/claude-web-$(printf '%s' "$REPO_ROOT$BRANCH_NAME" | md5sum | cut -c1-8)"
   if [ "$AHEAD_BASE" -gt 0 ] || [ "$DIRTY" -gt 0 ]; then
-    WS_LIB=""
-    for c in "$HOME/.claude/hooks/lib/web-standards-checks.sh" \
-             "$(dirname "${BASH_SOURCE[0]}")/claude/hooks/lib/web-standards-checks.sh"; do
-      [ -f "$c" ] && { WS_LIB="$c"; break; }
-    done
-    if [ -n "$WS_LIB" ]; then
-      . "$WS_LIB" 2>/dev/null
-      web_files=$( {
-        [ -n "$BASE" ] && git -C "$REPO_ROOT" diff --name-only "$BASE"...HEAD 2>/dev/null
-        git -C "$REPO_ROOT" diff --name-only HEAD 2>/dev/null
-        git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>/dev/null
-      } | grep -iE '\.(html?|vue|svelte|astro)$' | sort -u | head -25 )
-      if [ -n "$web_files" ] && declare -f ws_doc_findings >/dev/null 2>&1; then
-        while IFS= read -r wf; do
-          [ -n "$wf" ] && [ -f "$REPO_ROOT/$wf" ] || continue
-          n=$(ws_doc_findings "$(tr '\n\t' '  ' < "$REPO_ROOT/$wf")" | grep -oF '•' | wc -l | tr -d ' ')
-          WEB_ISSUES=$(( WEB_ISSUES + ${n:-0} ))
-        done <<< "$web_files"
-      fi
+    [ -f "$WEB_CACHE" ] && WEB_ISSUES=$(cat "$WEB_CACHE" 2>/dev/null)
+    WEB_ISSUES="${WEB_ISSUES:-0}"
+    WAGE=$(( $(date +%s) - $(stat -c %Y "$WEB_CACHE" 2>/dev/null || echo 0) ))
+    if [ ! -f "$WEB_CACHE" ] || [ "$WAGE" -gt 15 ]; then
+      ( WS_LIB=""
+        for c in "$HOME/.claude/hooks/lib/web-standards-checks.sh" \
+                 "$(dirname "${BASH_SOURCE[0]}")/claude/hooks/lib/web-standards-checks.sh"; do
+          [ -f "$c" ] && { WS_LIB="$c"; break; }
+        done
+        cnt=0
+        if [ -n "$WS_LIB" ]; then
+          . "$WS_LIB" 2>/dev/null
+          web_files=$( {
+            [ -n "$BASE" ] && git -C "$REPO_ROOT" diff --name-only "$BASE"...HEAD 2>/dev/null
+            git -C "$REPO_ROOT" diff --name-only HEAD 2>/dev/null
+            git -C "$REPO_ROOT" ls-files --others --exclude-standard 2>/dev/null
+          } | grep -iE '\.(html?|vue|svelte|astro)$' | sort -u | head -25 )
+          if [ -n "$web_files" ] && declare -f ws_doc_findings >/dev/null 2>&1; then
+            while IFS= read -r wf; do
+              [ -n "$wf" ] && [ -f "$REPO_ROOT/$wf" ] || continue
+              n=$(ws_doc_findings "$(tr '\n\t' '  ' < "$REPO_ROOT/$wf")" | grep -oF '•' | wc -l | tr -d ' ')
+              cnt=$(( cnt + ${n:-0} ))
+            done <<< "$web_files"
+          fi
+        fi
+        printf '%s' "$cnt" > "$WEB_CACHE.tmp" 2>/dev/null && mv "$WEB_CACHE.tmp" "$WEB_CACHE" 2>/dev/null
+      ) &>/dev/null &
     fi
+  else
+    WEB_ISSUES=0; rm -f "$WEB_CACHE" 2>/dev/null
   fi
 fi
 
