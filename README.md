@@ -132,7 +132,7 @@ What's included:
 |---|---|---|
 | `claude/settings.json` | `~/.claude/settings.json` | permissions, theme, status line, hook wiring |
 | `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | global instructions |
-| `claude/hooks/*.sh` | `~/.claude/hooks/` | quality/bloat/web-standards guards + nudges |
+| `claude/hooks/*.sh` | `~/.claude/hooks/` | quality/bloat/web-standards guards + nudges, stack-aware lint-on-edit, prompt intent/audit hooks |
 | `claude/skills/<name>` | `~/.claude/skills/` | custom skills |
 | `status.sh` | `~/.claude/status.sh` | this status bar |
 
