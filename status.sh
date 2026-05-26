@@ -1,262 +1,371 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# Claude Code Status Bar
+# Claude Code Status Bar (v2.1 — audit pass)
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# A single-line status bar for Claude Code that surfaces:
-#   • spinner + level (OK / WARN / HIGH / CRITICAL — driven by context usage)
-#   • highest-priority recommendation (e.g. /compact, commit, push)
-#   • model, token usage (in/out), session cost estimate
-#   • current git branch, uncommitted-changes bar, branch-size bar
-#   • system memory %
+# Single-line, label-based status bar. Sections collapse when their info is at
+# "quiet" state. Narrow terminals (<NARROW_COLS) shed low-priority sections.
 #
-# ── Install ──────────────────────────────────────────────────────────────────
-#   1. Save this file somewhere, e.g. ~/.claude/status.sh
-#   2. chmod +x ~/.claude/status.sh
-#   3. Wire it up in ~/.claude/settings.json:
+# Column groups (left → right):
+#   1. ●verdict      worst severity across context/cost/dirty/unpushed/mem
+#   2. advice        single highest-priority imperative (only when active)
+#   3. Context       % + bar (8-cell mini bar)
+#   4. Tokens        ↑in ↓out (estimated 65/35 split)
+#   5. Cost · Time   real cost from stdin; session elapsed
+#   6. Repo          Branch[⎇] · PR · Dirty · Unpushed · Behind · Base↑↓ · Lines · Stash · EAS
+#   7. Model         · Mode (non-default) · Style (non-default)
+#   8. System        Memory · Battery
 #
-#        {
-#          "statusLine": {
-#            "type": "command",
-#            "command": "bash ~/.claude/status.sh"
-#          }
-#        }
+# Install:
+#   { "statusLine": { "type": "command", "command": "bash ~/.claude/status.sh" } }
 #
-#   4. Restart Claude Code (or run /config) to reload.
-#
-# ── Requirements ─────────────────────────────────────────────────────────────
-#   bash 4+, jq, awk, git (optional — only used inside repos), free (optional,
-#   Linux only — falls back to "?" for memory on macOS/BSD).
-#
-# ── Manual test ──────────────────────────────────────────────────────────────
-#   CLAUDE_MODEL=claude-sonnet-4-6 CLAUDE_CONTEXT_TOKENS_USED=80000 \
-#     CLAUDE_MAX_CONTEXT_TOKENS=200000 bash status.sh
-#
+# Requires: bash 4+, jq. Optional: git, gh, free, /sys/class/power_supply/BAT*.
+# Honors NO_COLOR and TERM=dumb (emits plain text).
+
 # ── Tunables ─────────────────────────────────────────────────────────────────
-# Adjust per-MTok prices to match the model you use most. Defaults are Sonnet
-# 4.x rates ($3 input / $15 output per 1M tokens). Cost bar saturates at $5.
-PRICE_IN_PER_MTOK=3
+PRICE_IN_PER_MTOK=3        # fallback rates when stdin lacks real cost
 PRICE_OUT_PER_MTOK=15
-COST_BAR_MAX_USD=5
+COST_BAR_MAX_USD=5         # cost beyond this saturates the severity scale
+CTX_WARN=50; CTX_HIGH=75; CTX_CRIT=90
+DIRTY_WARN=5;  DIRTY_HIGH=10; DIRTY_CRIT=20
+PUSH_WARN=5;   PUSH_HIGH=10
+MEM_CRIT=90
+BAT_CRIT=15
+NARROW_COLS=110
+PR_CACHE_TTL=300           # seconds before background PR refresh
 
-# ── ANSI colours ──────────────────────────────────────────────────────────────
-R=$'\033[31m'
-Y=$'\033[33m'
-G=$'\033[32m'
-C=$'\033[36m'
-B=$'\033[1m'
-D=$'\033[2m'
-X=$'\033[0m'
+# ── Palette (honors NO_COLOR / TERM=dumb) ────────────────────────────────────
+if [ -n "$NO_COLOR" ] || [ "$TERM" = "dumb" ]; then
+  R=""; Y=""; G=""; C=""; B=""; D=""; X=""
+else
+  R=$'\033[31m'; Y=$'\033[33m'; G=$'\033[32m'; C=$'\033[36m'
+  B=$'\033[1m'; D=$'\033[2m'; X=$'\033[0m'
+fi
+GSEP="  "                       # between top-level groups
 
-SEP="${X} ${D}|${X} "
-
-# ── Inputs ────────────────────────────────────────────────────────────────────
-# Claude Code passes a JSON payload on stdin. Env vars are kept as overrides for
-# manual testing (see CLAUDE_MODEL=… bash status.sh in settings).
-INPUT=""
-if [ ! -t 0 ]; then INPUT=$(cat); fi
-[ -z "$INPUT" ] && INPUT="{}"
-
-MODEL=$(echo "$INPUT" | jq -r '.model.id // .model.display_name // empty' 2>/dev/null)
-MODEL="${CLAUDE_MODEL:-${MODEL:-unknown}}"
-
-TOKENS_USED=$(echo "$INPUT" | jq -r '
-  .context_window.used_tokens //
-  ((.context_window.used_percentage // 0) * 2000 | floor) //
-  empty
-' 2>/dev/null)
-TOKENS_USED="${CLAUDE_CONTEXT_TOKENS_USED:-${TOKENS_USED:-0}}"
-
-TOKENS_MAX=$(echo "$INPUT" | jq -r '
-  if (.context_window.used_percentage // 0) > 0 and (.context_window.used_tokens // 0) > 0
-  then (.context_window.used_tokens * 100 / .context_window.used_percentage | floor)
-  else empty end
-' 2>/dev/null)
-TOKENS_MAX="${CLAUDE_MAX_CONTEXT_TOKENS:-${TOKENS_MAX:-200000}}"
-
-SHORT_MODEL=$(echo "$MODEL" | sed 's/claude-//;s/-[0-9]\{8\}$//')
-
-# ── Progress bar ──────────────────────────────────────────────────────────────
-bar() {
-  local pct=$1 width=${2:-5} col=$3
-  local filled=$(( pct * width / 100 ))
-  local empty=$(( width - filled ))
-  local s="${col}${B}"
-  for ((i=0; i<filled; i++)); do s+="█"; done
-  s+="${X}${D}"
-  for ((i=0; i<empty; i++)); do s+="░"; done
-  s+="${X}"
-  printf '%s' "$s"
-}
-
+# ── Helpers ──────────────────────────────────────────────────────────────────
 pct_color() {
   local p=$1
   if   [ "$p" -lt 50 ]; then printf '%s' "$G"
   elif [ "$p" -lt 75 ]; then printf '%s' "$Y"
-  else                        printf '%s' "$R"
+  else                       printf '%s' "$R"
   fi
 }
 
-# ── Context window ────────────────────────────────────────────────────────────
-CTX_PCT=0
-[ "$TOKENS_MAX" -gt 0 ] && CTX_PCT=$(( TOKENS_USED * 100 / TOKENS_MAX ))
-CTX_COL=$(pct_color "$CTX_PCT")
-
-# ── Cost estimate (rates configured at top of file) ──────────────────────────
-IN_TOK=$(( TOKENS_USED * 65 / 100 ))
-OUT_TOK=$(( TOKENS_USED * 35 / 100 ))
-COST_STR=$(awk -v i="$IN_TOK" -v o="$OUT_TOK" -v pi="$PRICE_IN_PER_MTOK" -v po="$PRICE_OUT_PER_MTOK" 'BEGIN {
-  c = (i*pi + o*po) / 1000000
-  if (c < 0.01) print "<$0.01"
-  else           printf "$%.2f", c
-}')
-COST_PCT=$(awk -v i="$IN_TOK" -v o="$OUT_TOK" -v pi="$PRICE_IN_PER_MTOK" -v po="$PRICE_OUT_PER_MTOK" -v cap="$COST_BAR_MAX_USD" 'BEGIN {
-  c = (i*pi + o*po) / 1000000
-  p = (cap > 0) ? c / cap * 100 : 0
-  if (p > 100) p = 100
-  printf "%d", p
-}')
-COST_COL=$(pct_color "$COST_PCT")
+bar() {
+  local pct=$1 width=${2:-6} col=$3 s
+  local filled=$(( pct * width / 100 ))
+  [ "$filled" -gt "$width" ] && filled=$width
+  s="${col}${B}"
+  for ((i=0; i<filled; i++)); do s+="▓"; done
+  s+="${X}${D}"
+  for ((i=0; i<width-filled; i++)); do s+="░"; done
+  s+="${X}"
+  printf '%s' "$s"
+}
 
 fmt_k() {
-  awk -v n="$1" 'BEGIN { if (n >= 1000) printf "%.1fk", n/1000; else printf "%d", n }'
+  awk -v n="$1" 'BEGIN {
+    if      (n >= 1000000) printf "%.1fM", n/1000000
+    else if (n >= 1000)    printf "%.1fk", n/1000
+    else                   printf "%d", n
+  }'
 }
-IN_STR=$(fmt_k "$IN_TOK")
-OUT_STR=$(fmt_k "$OUT_TOK")
 
-# ── Git: uncommitted + unpushed + branch size for the current repo ───────────
-DIRTY=0
-UNPUSHED=0
-BRANCH_LINES=0
-CWD=$(echo "$INPUT" | jq -r '.workspace.current_dir // .cwd // empty' 2>/dev/null)
+fmt_duration() {
+  awk -v ms="$1" 'BEGIN {
+    s = int(ms/1000)
+    if      (s < 60)   printf "%ds", s
+    else if (s < 3600) printf "%dm", int(s/60)
+    else               printf "%dh%dm", int(s/3600), int((s%3600)/60)
+  }'
+}
+
+# Integer with severity color when non-zero, dim "0" otherwise.
+# Leading space is part of the output so callers can chain "Label:" + fmt_count.
+fmt_count() {
+  local n="$1" col="$2" prefix="${3:-}"
+  if [ "$n" -eq 0 ]; then printf "${D} %s0${X}" "$prefix"
+  else                    printf "${col}${B} %s%s${X}" "$prefix" "$n"
+  fi
+}
+
+# Highest score wins.
+set_advice() {
+  local score=$1
+  [ "$score" -le "$ADVICE_SCORE" ] && return
+  ADVICE=$2; ADVICE_SCORE=$score; ADVICE_COL=$3
+}
+
+# ── Input (single jq fork → mapfile preserves empty fields) ──────────────────
+INPUT=""; [ ! -t 0 ] && INPUT=$(cat); [ -z "$INPUT" ] && INPUT="{}"
+
+mapfile -t F < <(printf '%s' "$INPUT" | jq -r '[
+    (.model.id // .model.display_name // "unknown"),
+    (.context_window.used_tokens // 0),
+    (.context_window.used_percentage // 0),
+    (.permission_mode // ""),
+    (.output_style.name // ""),
+    (.cost.total_cost_usd // ""),
+    (.cost.total_duration_ms // 0),
+    (.workspace.current_dir // .cwd // ""),
+    (.terminal_width // .columns // 0)
+  ] | .[]' 2>/dev/null)
+MODEL_RAW="${F[0]:-unknown}"
+TOKENS_USED="${F[1]:-0}"
+USED_PCT="${F[2]:-0}"
+PERM_MODE="${F[3]}"
+OUT_STYLE="${F[4]}"
+REAL_COST="${F[5]}"
+SESSION_MS="${F[6]:-0}"
+CWD="${F[7]}"
+TERM_W="${F[8]:-0}"
+
+MODEL="${CLAUDE_MODEL:-${MODEL_RAW:-unknown}}"
+TOKENS_USED="${CLAUDE_CONTEXT_TOKENS_USED:-${TOKENS_USED:-0}}"
 CWD="${CWD:-$PWD}"
+
+# Width: stdin → $COLUMNS → tput → default. Drives narrow-mode toggle.
+[ "${TERM_W:-0}" -le 0 ] && TERM_W="${COLUMNS:-0}"
+[ "$TERM_W" -le 0 ] && TERM_W=$(tput cols 2>/dev/null || echo 0)
+[ "$TERM_W" -le 0 ] && TERM_W=200
+NARROW=0; [ "$TERM_W" -lt "$NARROW_COLS" ] && NARROW=1
+
+# Token max: stdin-derived → env override → 1M when model carries [1m] → 200k.
+TOKENS_MAX=0
+if [ "${USED_PCT%.*}" -gt 0 ] 2>/dev/null && [ "$TOKENS_USED" -gt 0 ]; then
+  TOKENS_MAX=$(awk -v u="$TOKENS_USED" -v p="$USED_PCT" 'BEGIN { printf "%d", u*100/p }')
+fi
+if [ "$TOKENS_MAX" -le 0 ]; then
+  if [ -n "$CLAUDE_MAX_CONTEXT_TOKENS" ]; then TOKENS_MAX="$CLAUDE_MAX_CONTEXT_TOKENS"
+  elif [[ "$MODEL" == *"[1m]"* ]];          then TOKENS_MAX=1000000
+  else                                           TOKENS_MAX=200000
+  fi
+fi
+
+# Model: strip "claude-" + trailing date stamp; preserve [1m] (1M-context flag).
+SHORT_MODEL=$(printf '%s' "$MODEL" | sed -E 's/^claude-//; s/-[0-9]{8}([^0-9]|$)/\1/')
+
+# ── Context ──────────────────────────────────────────────────────────────────
+CTX_PCT=0
+[ "$TOKENS_MAX" -gt 0 ] && CTX_PCT=$(( TOKENS_USED * 100 / TOKENS_MAX ))
+[ "$CTX_PCT" -gt 100 ] && CTX_PCT=100
+CTX_COL=$(pct_color "$CTX_PCT")
+
+# ── Cost (real from stdin; fall back to token-split estimate). One awk each. ─
+if [ -n "$REAL_COST" ] && [ "$REAL_COST" != "null" ]; then
+  read -r COST_STR COST_PCT <<<"$(awk -v c="$REAL_COST" -v cap="$COST_BAR_MAX_USD" 'BEGIN {
+    if (c+0 < 0.01) s="<$0.01"; else s=sprintf("$%.2f", c+0)
+    p = (cap > 0) ? c/cap*100 : 0; if (p > 100) p = 100
+    printf "%s %d", s, p
+  }')"
+else
+  IN_TOK=$(( TOKENS_USED * 65 / 100 )); OUT_TOK=$(( TOKENS_USED * 35 / 100 ))
+  read -r COST_STR COST_PCT <<<"$(awk -v i="$IN_TOK" -v o="$OUT_TOK" \
+    -v pi="$PRICE_IN_PER_MTOK" -v po="$PRICE_OUT_PER_MTOK" -v cap="$COST_BAR_MAX_USD" 'BEGIN {
+      c = (i*pi + o*po) / 1000000
+      if (c < 0.01) s="<$0.01"; else s=sprintf("$%.2f", c)
+      p = (cap > 0) ? c/cap*100 : 0; if (p > 100) p = 100
+      printf "%s %d", s, p
+    }')"
+fi
+COST_COL=$(pct_color "$COST_PCT")
+
+IN_STR=$(fmt_k "$(( TOKENS_USED * 65 / 100 ))")
+OUT_STR=$(fmt_k "$(( TOKENS_USED * 35 / 100 ))")
+
+# Session elapsed (strip fractional ms if upstream sends a float).
+SESSION_STR=""; SESSION_MS_INT="${SESSION_MS%.*}"
+[ "${SESSION_MS_INT:-0}" -gt 0 ] 2>/dev/null && SESSION_STR=$(fmt_duration "$SESSION_MS_INT")
+
+# ── Git ──────────────────────────────────────────────────────────────────────
 REPO_ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)
-BRANCH_NAME="-"
+BRANCH_NAME=""; DIRTY=0; UNPUSHED=0; TO_PULL=0; CONFLICTS=0
+AHEAD_BASE=0; BEHIND_BASE=0; BRANCH_LINES=0; STASH_COUNT=0
+WORKTREE_MARK=""; PR_NUM=""; EAS_HINT=""
+
 if [ -n "$REPO_ROOT" ]; then
-  DIRTY=$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-  UNPUSHED=$(git -C "$REPO_ROOT" log @{u}.. --oneline 2>/dev/null | wc -l | tr -d ' ')
-  BRANCH_NAME=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)
-  [ -z "$BRANCH_NAME" ] || [ "$BRANCH_NAME" = "HEAD" ] && BRANCH_NAME="detached"
+  # branch + upstream ahead/behind + porcelain file list in one call
+  GIT_STATUS=$(git -C "$REPO_ROOT" status --porcelain=2 --branch 2>/dev/null)
+  BRANCH_NAME=$(awk '/^# branch.head/{print $3; exit}' <<<"$GIT_STATUS")
+  if [ "$BRANCH_NAME" = "(detached)" ] || [ -z "$BRANCH_NAME" ]; then
+    BRANCH_NAME="@$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null)"
+  fi
+  read -r AHEAD_UP BEHIND_UP <<<"$(awk '/^# branch.ab/{print $3+0, $4*-1}' <<<"$GIT_STATUS")"
+  UNPUSHED="${AHEAD_UP:-0}"
+  TO_PULL="${BEHIND_UP:-0}"
+  # Dirty excludes unmerged (`u`); conflicts are surfaced separately via advice.
+  DIRTY=$(grep -cE '^[12?]' <<<"$GIT_STATUS")
+  CONFLICTS=$(grep -cE '^u' <<<"$GIT_STATUS")
+
+  # vs base (origin/HEAD → origin/main → origin/master): line delta + stack depth
   BASE=$(git -C "$REPO_ROOT" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/@@')
-  [ -z "$BASE" ] && BASE=$(git -C "$REPO_ROOT" rev-parse --verify origin/main 2>/dev/null >/dev/null && echo origin/main)
-  [ -z "$BASE" ] && BASE=$(git -C "$REPO_ROOT" rev-parse --verify origin/master 2>/dev/null >/dev/null && echo origin/master)
+  [ -z "$BASE" ] && git -C "$REPO_ROOT" rev-parse --verify origin/main >/dev/null 2>&1 && BASE=origin/main
+  [ -z "$BASE" ] && git -C "$REPO_ROOT" rev-parse --verify origin/master >/dev/null 2>&1 && BASE=origin/master
   if [ -n "$BASE" ]; then
     MB=$(git -C "$REPO_ROOT" merge-base HEAD "$BASE" 2>/dev/null)
     if [ -n "$MB" ]; then
       BRANCH_LINES=$(git -C "$REPO_ROOT" diff --shortstat "$MB"...HEAD 2>/dev/null | \
         awk '{ for(i=1;i<=NF;i++) if($i~/^[0-9]+$/ && ($(i+1)~/insertion/||$(i+1)~/deletion/)) s+=$i } END { print s+0 }')
+      read -r BEHIND_BASE AHEAD_BASE <<<"$(git -C "$REPO_ROOT" rev-list --left-right --count "$BASE"...HEAD 2>/dev/null)"
     fi
   fi
+  AHEAD_BASE="${AHEAD_BASE:-0}"; BEHIND_BASE="${BEHIND_BASE:-0}"
+
+  # Worktree detection in one rev-parse (git-dir + common-dir on stdout)
+  mapfile -t GD_LINES < <(git -C "$REPO_ROOT" rev-parse --git-dir --git-common-dir 2>/dev/null)
+  GD="${GD_LINES[0]}"; GCD="${GD_LINES[1]}"
+  if [ -n "$GD" ] && [ -n "$GCD" ]; then
+    GDR=$(cd "$REPO_ROOT" 2>/dev/null && realpath "$GD" 2>/dev/null)
+    GCDR=$(cd "$REPO_ROOT" 2>/dev/null && realpath "$GCD" 2>/dev/null)
+    [ -n "$GDR" ] && [ "$GDR" != "$GCDR" ] && WORKTREE_MARK="⎇ "
+  fi
+
+  STASH_COUNT=$(git -C "$REPO_ROOT" stash list 2>/dev/null | wc -l | tr -d ' ')
+
+  # PR #: render from cache; refresh in background. "-" sentinel means "no PR".
+  if command -v gh &>/dev/null && [[ "$BRANCH_NAME" != "@"* ]]; then
+    PR_CACHE="/tmp/claude-pr-$(printf '%s' "$REPO_ROOT$BRANCH_NAME" | md5sum | cut -c1-8)"
+    [ -f "$PR_CACHE" ] && PR_NUM=$(cat "$PR_CACHE" 2>/dev/null)
+    [ "$PR_NUM" = "-" ] && PR_NUM=""
+    CACHE_AGE=$(( $(date +%s) - $(stat -c %Y "$PR_CACHE" 2>/dev/null || echo 0) ))
+    if [ ! -f "$PR_CACHE" ] || [ "$CACHE_AGE" -gt "$PR_CACHE_TTL" ]; then
+      (cd "$REPO_ROOT" && {
+        n=$(timeout 5 gh pr view "$BRANCH_NAME" --json number -q .number 2>/dev/null)
+        [ -z "$n" ] && n="-"
+        printf '%s' "$n"
+      } > "$PR_CACHE.tmp" && mv "$PR_CACHE.tmp" "$PR_CACHE") &>/dev/null &
+    fi
+  fi
+
+  # EAS/Expo project (has eas.json): hint to prefix `eas update` with EXPO_GO=1
+  # so the OTA payload loads in Expo Go.
+  [ -f "$REPO_ROOT/eas.json" ] && EAS_HINT="EXPO_GO=1"
 fi
 
-DIRTY_PCT=$(( DIRTY * 5 ));    [ "$DIRTY_PCT" -gt 100 ] && DIRTY_PCT=100
-PUSH_PCT=$(( UNPUSHED * 10 )); [ "$PUSH_PCT"  -gt 100 ] && PUSH_PCT=100
-BRANCH_PCT=$(( BRANCH_LINES / 5 )); [ "$BRANCH_PCT" -gt 100 ] && BRANCH_PCT=100
-DIRTY_COL=$(pct_color "$DIRTY_PCT")
-PUSH_COL=$(pct_color "$PUSH_PCT")
-BRANCH_COL=$(pct_color "$BRANCH_PCT")
+DIRTY_COL=$(pct_color $(( DIRTY * 5  > 100 ? 100 : DIRTY * 5  )))
+PUSH_COL=$( pct_color $(( UNPUSHED*10 > 100 ? 100 : UNPUSHED*10 )))
+PULL_COL=$( pct_color $(( TO_PULL*10 > 100 ? 100 : TO_PULL*10 )))
+LINES_COL=$(pct_color $(( BRANCH_LINES/5 > 100 ? 100 : BRANCH_LINES/5 )))
 
-# ── System memory ─────────────────────────────────────────────────────────────
-MEM_PCT=0; MEM_STR="?"
+# ── System ───────────────────────────────────────────────────────────────────
+MEM_PCT=0; MEM_STR=""
 if command -v free &>/dev/null; then
-  read -r mtotal mused <<< "$(free -m | awk '/^Mem:/{print $2,$3}')"
-  if [ "${mtotal:-0}" -gt 0 ]; then
-    MEM_PCT=$(( mused * 100 / mtotal ))
-    MEM_STR="${MEM_PCT}%"
-  fi
+  read -r mtotal mused <<<"$(free -m | awk '/^Mem:/{print $2,$3}')"
+  if [ "${mtotal:-0}" -gt 0 ]; then MEM_PCT=$(( mused * 100 / mtotal )); MEM_STR="${MEM_PCT}%"; fi
 fi
 MEM_COL=$(pct_color "$MEM_PCT")
 
-# ── Recommendation: highest-priority actionable message ──────────────────────
-# Scored by severity (higher = more urgent). Only the top one is shown.
-ADVICE=""
-ADVICE_SCORE=0
-ADVICE_COL="$G"
-
-# Context pressure (checked first — most urgent, affects this session directly)
-if   [ "$CTX_PCT" -ge 90 ]; then
-  ADVICE="/compact"
-  ADVICE_SCORE=100; ADVICE_COL="${R}${B}"
-elif [ "$CTX_PCT" -ge 75 ]; then
-  ADVICE="/compact"
-  ADVICE_SCORE=80; ADVICE_COL="$Y"
-elif [ "$CTX_PCT" -ge 50 ]; then
-  ADVICE="consider /compact"
-  ADVICE_SCORE=50; ADVICE_COL="$Y"
-fi
-
-# Cost pressure
-COST_SCORE=0
-if   [ "$COST_PCT" -ge 80 ]; then COST_SCORE=70
-elif [ "$COST_PCT" -ge 50 ]; then COST_SCORE=40
-fi
-if [ "$COST_SCORE" -gt "$ADVICE_SCORE" ]; then
-  ADVICE="start a new session"
-  ADVICE_SCORE=$COST_SCORE; ADVICE_COL="$Y"
-fi
-
-# Uncommitted changes (large = risky, many = PR will be huge)
-DIRTY_SCORE=0
-if   [ "$DIRTY" -ge 20 ]; then DIRTY_SCORE=75
-elif [ "$DIRTY" -ge 10 ]; then DIRTY_SCORE=60
-elif [ "$DIRTY" -ge 5  ]; then DIRTY_SCORE=45
-elif [ "$DIRTY" -ge 1  ]; then DIRTY_SCORE=20
-fi
-if [ "$DIRTY_SCORE" -gt "$ADVICE_SCORE" ]; then
-  if [ "$DIRTY" -ge 10 ]; then
-    ADVICE="break into smaller commits"
-  else
-    ADVICE="commit your changes"
+BAT_PCT=""; BAT_CHARGING=""
+for b in /sys/class/power_supply/BAT*; do
+  [ -r "$b/capacity" ] || continue
+  read -r BAT_PCT < "$b/capacity" 2>/dev/null
+  read -r BAT_STATUS < "$b/status" 2>/dev/null
+  [ "$BAT_STATUS" = "Charging" ] && BAT_CHARGING="+"
+  break
+done
+BAT_COL="$G"
+if [ -n "$BAT_PCT" ]; then
+  if   [ "$BAT_PCT" -lt 20 ]; then BAT_COL="$R"
+  elif [ "$BAT_PCT" -lt 40 ]; then BAT_COL="$Y"
   fi
-  ADVICE_SCORE=$DIRTY_SCORE
-  [ "$DIRTY" -ge 10 ] && ADVICE_COL="${R}" || ADVICE_COL="${Y}"
 fi
 
-# Unpushed commits (stacking up = PR will be hard to review)
-PUSH_SCORE=0
-if   [ "$UNPUSHED" -ge 10 ]; then PUSH_SCORE=65
-elif [ "$UNPUSHED" -ge 5  ]; then PUSH_SCORE=50
-elif [ "$UNPUSHED" -ge 1  ]; then PUSH_SCORE=15
+# ── Advice (severity-scored; highest wins) ───────────────────────────────────
+ADVICE=""; ADVICE_SCORE=0; ADVICE_COL="$G"
+
+if   [ "$CTX_PCT" -ge "$CTX_CRIT" ]; then set_advice 100 "/compact" "${R}${B}"
+elif [ "$CTX_PCT" -ge "$CTX_HIGH" ]; then set_advice 80  "/compact" "$Y"
+elif [ "$CTX_PCT" -ge "$CTX_WARN" ]; then set_advice 50  "consider /compact" "$Y"
 fi
-if [ "$PUSH_SCORE" -gt "$ADVICE_SCORE" ]; then
-  if [ "$UNPUSHED" -ge 10 ]; then
-    ADVICE="split into multiple PRs"
-  else
-    ADVICE="git push"
+[ "$COST_PCT" -ge 80 ] && set_advice 70 "new session" "$Y"
+[ "$COST_PCT" -ge 50 ] && [ "$COST_PCT" -lt 80 ] && set_advice 40 "watch cost" "$Y"
+
+if   [ "$DIRTY" -ge "$DIRTY_CRIT" ]; then set_advice 75 "break into smaller commits" "$R"
+elif [ "$DIRTY" -ge "$DIRTY_HIGH" ]; then set_advice 60 "break into smaller commits" "$R"
+elif [ "$DIRTY" -ge "$DIRTY_WARN" ]; then set_advice 45 "commit changes" "$Y"
+fi
+if   [ "$UNPUSHED" -ge "$PUSH_HIGH" ]; then set_advice 65 "split into multiple PRs" "$Y"
+elif [ "$UNPUSHED" -ge "$PUSH_WARN" ]; then set_advice 50 "git push" "$Y"
+fi
+[ "$CONFLICTS" -gt 0 ]                                    && set_advice 95 "resolve conflicts" "${R}${B}"
+[ "$TO_PULL" -ge 1 ]                                      && set_advice 30 "git pull" "$Y"
+[ "$MEM_PCT" -ge "$MEM_CRIT" ]                            && set_advice 85 "free memory" "$R"
+[ -n "$BAT_PCT" ] && [ -z "$BAT_CHARGING" ] && \
+  [ "$BAT_PCT" -lt "$BAT_CRIT" ]                          && set_advice 90 "plug in (battery <${BAT_CRIT}%)" "$R"
+
+# ── Verdict beacon (worst severity across all axes) ──────────────────────────
+WORST=0
+for s in "$CTX_PCT" "$COST_PCT" $((DIRTY*5)) $((UNPUSHED*10)) "$MEM_PCT"; do
+  [ "$s" -gt "$WORST" ] && WORST=$s
+done
+[ "$CONFLICTS" -gt 0 ] && WORST=100
+[ "$WORST" -gt 100 ] && WORST=100
+if   [ "$WORST" -ge 90 ]; then VERDICT_COL="$R"; VERDICT_TAG="critical"
+elif [ "$WORST" -ge 75 ]; then VERDICT_COL="$Y"; VERDICT_TAG="high"
+elif [ "$WORST" -ge 50 ]; then VERDICT_COL="$Y"; VERDICT_TAG="medium"
+else                           VERDICT_COL="$G"; VERDICT_TAG="ok"
+fi
+
+# ── Render ───────────────────────────────────────────────────────────────────
+# 1) Verdict beacon
+printf "${VERDICT_COL}${B}●${X} ${VERDICT_COL}%s${X}${GSEP}" "$VERDICT_TAG"
+
+# 2) Advice (when active)
+[ -n "$ADVICE" ] && printf "${ADVICE_COL}${B}%s${X}${GSEP}" "$ADVICE"
+
+# 3) Context % + bar (bar hidden on narrow)
+printf "${D}Context:${X} ${CTX_COL}${B}%d%%${X}" "$CTX_PCT"
+[ "$NARROW" -eq 0 ] && printf " %s" "$(bar "$CTX_PCT" 8 "$CTX_COL")"
+printf "${GSEP}"
+
+# 4) Tokens
+printf "${D}Tokens:${X} ${C}↑${X}${B}${IN_STR}${X} ${C}↓${X}${B}${OUT_STR}${X}${GSEP}"
+
+# 5) Cost · session time (bold cost when no advice is stealing the spotlight)
+COST_BOLD=""; [ -z "$ADVICE" ] && COST_BOLD="$B"
+printf "${D}Cost:${X} ${COST_COL}${COST_BOLD}%s${X}" "$COST_STR"
+[ "$NARROW" -eq 0 ] && [ -n "$SESSION_STR" ] && printf " ${D}Time:${X} ${C}%s${X}" "$SESSION_STR"
+printf "${GSEP}"
+
+# 6) Repo group
+if [ -n "$REPO_ROOT" ]; then
+  printf "${D}Branch:${X} ${C}${WORKTREE_MARK}${B}%s${X}" "$BRANCH_NAME"
+  [ -n "$PR_NUM" ] && printf " ${D}PR:${X} ${C}${B}%s${X}" "$PR_NUM"
+  printf " ${D}Dirty:${X}";    fmt_count "$DIRTY"    "$DIRTY_COL"
+  printf " ${D}Unpushed:${X}"; fmt_count "$UNPUSHED" "$PUSH_COL"
+  [ "$TO_PULL" -gt 0 ] && { printf " ${D}Behind:${X}"; fmt_count "$TO_PULL" "$PULL_COL"; }
+  if [ "$AHEAD_BASE" != "0" ] || [ "$BEHIND_BASE" != "0" ]; then
+    printf " ${D}Base:${X} ${C}↑${X}${B}${AHEAD_BASE}${X}${C}↓${X}${B}${BEHIND_BASE}${X}"
   fi
-  ADVICE_SCORE=$PUSH_SCORE
-  [ "$UNPUSHED" -ge 5 ] && ADVICE_COL="${Y}" || ADVICE_COL="${D}"
+  [ "$NARROW" -eq 0 ] && { printf " ${D}Lines:${X}"; fmt_count "$BRANCH_LINES" "$LINES_COL" "+"; }
+  [ "$NARROW" -eq 0 ] && [ "$STASH_COUNT" -gt 0 ] && printf " ${D}Stash: %s${X}" "$STASH_COUNT"
+  [ "$NARROW" -eq 0 ] && [ -n "$EAS_HINT" ] && printf " ${D}EAS:${X} ${Y}%s${X}" "$EAS_HINT"
+  printf "${GSEP}"
 fi
 
-# Memory pressure
-if [ "$MEM_PCT" -ge 90 ] && [ 90 -gt "$ADVICE_SCORE" ]; then
-  ADVICE="free up system memory"
-  ADVICE_SCORE=85; ADVICE_COL="${R}"
+# 7) Model · Mode · Style (mode/style only when non-default; bypass = red)
+printf "${D}Model:${X} ${C}%s${X}" "$SHORT_MODEL"
+if [ -n "$PERM_MODE" ] && [ "$PERM_MODE" != "default" ] && [ "$PERM_MODE" != "auto" ]; then
+  MODE_COL="${Y}${B}"
+  [ "$PERM_MODE" = "bypassPermissions" ] && MODE_COL="${R}${B}"
+  printf " ${D}Mode:${X} ${MODE_COL}%s${X}" "$PERM_MODE"
+fi
+if [ -n "$OUT_STYLE" ] && [ "$OUT_STYLE" != "default" ]; then
+  printf " ${D}Style:${X} ${C}%s${X}" "$OUT_STYLE"
+fi
+printf "${GSEP}"
+
+# 8) System (Memory · Battery). Battery hidden when 100% & charging.
+if [ -n "$MEM_STR" ]; then printf "${D}Memory:${X} ${MEM_COL}${B}%s${X}" "$MEM_STR"; fi
+if [ -n "$BAT_PCT" ]; then
+  SHOW_BAT=1
+  { [ "$BAT_PCT" = "100" ] && [ -n "$BAT_CHARGING" ]; } && SHOW_BAT=0
+  [ "$NARROW" -eq 1 ] && [ "$BAT_PCT" -ge 40 ] && [ -n "$BAT_CHARGING" ] && SHOW_BAT=0
+  if [ "$SHOW_BAT" -eq 1 ]; then
+    [ -n "$MEM_STR" ] && printf " "
+    printf "${D}Battery:${X} ${BAT_COL}${B}%s%s%%${X}" "$BAT_CHARGING" "$BAT_PCT"
+  fi
 fi
 
-# All clear
-if [ -z "$ADVICE" ]; then
-  ADVICE="all clear"
-  ADVICE_COL="${D}"
-fi
-
-# ── Level indicator (driven by context window, the session-scoped resource) ───
-SPIN_FRAMES=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-SPIN="${SPIN_FRAMES[$(( $(date +%s) % 10 ))]}"
-if   [ "$CTX_PCT" -lt 50 ]; then LEVEL="${G}${B}${SPIN} OK${X}"
-elif [ "$CTX_PCT" -lt 75 ]; then LEVEL="${Y}${B}! WARN${X}"
-elif [ "$CTX_PCT" -lt 90 ]; then LEVEL="${Y}${B}! HIGH${X}"
-else                              LEVEL="${R}${B}! CRITICAL${X}"
-fi
-
-# ── Assemble ──────────────────────────────────────────────────────────────────
-printf '%s' "${LEVEL}${SEP}"
-printf '%s' "${ADVICE_COL}${ADVICE}${X}${SEP}"
-printf '%s' "${B}${C}${SHORT_MODEL}${X}${SEP}"
-printf '%s' "Tokens: ${C}↑${B}${IN_STR}${X} ${C}↓${B}${OUT_STR}${X}${SEP}"
-printf '%s' "Cost: ${COST_COL}${B}${COST_STR}${X}${SEP}"
-printf '%s' "Branch: ${B}${C}${BRANCH_NAME}${X}${SEP}"
-printf '%s' "Commit: [$(bar "$DIRTY_PCT" 5 "$DIRTY_COL")]${SEP}"
-printf '%s' "Size: [$(bar "$BRANCH_PCT" 5 "$BRANCH_COL")]${SEP}"
-printf '%s' "Mem: ${MEM_COL}${B}${MEM_STR}${X}"
 printf '\n'

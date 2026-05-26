@@ -1,0 +1,146 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "bash $HOME/.claude/status.sh",
+    "refreshInterval": 10
+  },
+  "theme": "dark",
+  "skipAutoPermissionPrompt": true,
+  "includeGitInstructions": false,
+  "skillListingMaxDescChars": 600,
+  "fileCheckpointingEnabled": false,
+  "cleanupPeriodDays": 7,
+  "permissions": {
+    "defaultMode": "auto",
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~)",
+      "Bash(rm -rf $HOME)",
+      "Bash(sudo rm *)",
+      "Bash(dd if=* of=/dev/sd*)",
+      "Bash(dd if=* of=/dev/nvme*)",
+      "Bash(mkfs.* *)",
+      "Bash(mkfs *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(chmod -R 777 /*)",
+      "Bash(curl * | sh)",
+      "Bash(curl * | bash)",
+      "Bash(wget * | sh)",
+      "Bash(wget * | bash)"
+    ]
+  },
+  "skillOverrides": {
+    "write-a-skill": "user-invocable-only",
+    "claude-api": "name-only"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/pre-edit-guards.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/web-standards-guard.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/quality-guard.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/pre-read-guards.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/pre-bash-guards.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/subagent-cost-guard.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Read|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/re-read-track.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/test-coexistence-nudge.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/post-edit-debt-nudges.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/web-standards-nudge.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/pre-compact-reminder.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash $HOME/.claude/hooks/session-summary.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
