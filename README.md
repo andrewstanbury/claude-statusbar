@@ -1,175 +1,72 @@
-# Claude Code Status Bar
+# claude-statusbar
 
-A single-line status bar for [Claude Code](https://claude.com/claude-code) that shows what you actually need at a glance:
+A portable, **modular** [Claude Code](https://claude.com/claude-code) setup you can drop onto any machine in one command — a rich status bar plus optional quality/workflow **hooks**, **skills**, and global **instructions**. Pick exactly the parts you want, keep each independently versioned, and stay on the latest automatically.
 
 ```
-⠙ OK | all clear | sonnet-4-6 | Tokens: ↑52.0k ↓28.0k | Cost: $0.58 | Branch: feat/x | Commit: [██░░░] | Size: [█░░░░] | Mem: 32%
+● ok  Context: 12%  ▓░░░░░░░  Tokens: ↑52.0k ↓28.0k  Cost: $0.58  Branch: feat/x  PR: 42  Web: ⚠ 2  Dirty: 3  Model: sonnet-4-6  Memory: 32%
 ```
 
-- **Spinner + level** — `OK` / `WARN` / `HIGH` / `CRITICAL`, driven by context window usage
-- **Recommendation** — highest-priority actionable nudge: `/compact`, `commit your changes`, `git push`, `start a new session`, etc.
-- **Model**, **token usage**, **session cost estimate**
-- **Git** — current branch, uncommitted-changes bar, branch-size bar (lines vs base)
-- **System memory %**
+## What's in it
 
----
+Granularity is "medium" — the status bar, the global instructions, five hook groups, and each skill are individually selectable. Installing **everything is recommended** (and the default).
 
-## Requirements
-
-| | bash 4+ | jq | curl | git (optional) | free (optional) |
-|---|---|---|---|---|---|
-| **Linux** | ✓ default | install via pkg mgr | ✓ default | for branch info | ✓ default |
-| **macOS** | install via Homebrew[^1] | install via Homebrew | ✓ default | for branch info | n/a (memory shows `?`) |
-| **Windows** | via Git Bash / WSL2 | via Git Bash / WSL2 | ✓ in both | for branch info | WSL2 only |
-
-[^1]: macOS ships bash 3.2. The script *mostly* works on 3.2 but bash 4+ is recommended.
-
----
+| Component | What it does |
+|---|---|
+| **Status bar** | Single line: context %, tokens, cost/time, git (branch · PR · web-degradation flag · dirty · unpushed · base · lines · stash), model/mode, memory. |
+| **Global instructions** | `CLAUDE.md` — terse-mode default, quality-gate rules, web standards, and the confirm-intent task-management workflow (restate → prioritized tasks with time estimates → per-task approval/pacing). |
+| **Workflow hooks** | `confirm-intent`, `audit-with-rules` (full-project audit on request), `stack-lint` (advisory, stack-aware lint-on-edit). |
+| **Quality guards** | Block debug code / untested components / untracked TODOs / no-expiry skips; plus pre-edit, pre-bash, and pre-read guards. |
+| **Web standards** | Block (guard) + nudge on HTML a11y/SEO/semantic-nesting issues. |
+| **Dead-code guard** | Block commented-out code blocks; recommend removing unused/duplicated code. |
+| **Session / cost** | Session summary, subagent-cost guard, compaction reminder, re-read tracker. |
+| **Skills** | `caveman`, `grill-me`, `write-a-skill` (each optional). |
 
 ## Install
 
-### Linux
-
 ```bash
-# 1. install jq if you don't have it
-sudo apt install jq           # Debian/Ubuntu
-sudo dnf install jq           # Fedora/RHEL
-sudo pacman -S jq             # Arch
-
-# 2. one-liner install
+# Linux / macOS / WSL — requires bash 4+, git, jq
 curl -fsSL https://raw.githubusercontent.com/andrewstanbury/claude-statusbar/main/install.sh | bash
 ```
 
-### macOS
+The installer asks **“Install ALL components (recommended)? [Y/n]”** — press Enter for everything, or answer `n` to choose per component. It symlinks the chosen pieces into `~/.claude` and **composes** `~/.claude/settings.json` with only the hooks you selected (plus the status line). Restart Claude Code (or run `/config`) afterwards.
+
+Already have the repo cloned?
 
 ```bash
-# 1. install bash 4+ and jq via Homebrew
-brew install bash jq
-
-# 2. one-liner install
-curl -fsSL https://raw.githubusercontent.com/andrewstanbury/claude-statusbar/main/install.sh | bash
+bash install.sh            # interactive install
+bash install.sh --status   # installed-vs-latest version of each component
+bash install.sh --update   # bring the installed set to latest
+bash uninstall.sh          # clean removal
 ```
 
-### Windows
+## Versioning & updates
 
-**Option A — Git Bash** (recommended if you already use it):
-
-1. Open **Git Bash** (ships with [Git for Windows](https://git-scm.com/download/win)).
-2. Install `jq`:
-   - Easiest: download [jq.exe](https://jqlang.org/download/) and place in your `PATH`.
-   - Or via [Chocolatey](https://chocolatey.org/): `choco install jq`
-   - Or via [Scoop](https://scoop.sh/): `scoop install jq`
-3. Run the installer:
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/andrewstanbury/claude-statusbar/main/install.sh | bash
-   ```
-4. The status bar writes to `%USERPROFILE%\.claude\settings.json`, which Claude Code on Windows reads.
-
-**Option B — WSL2** (if Claude Code runs inside WSL):
-
-```bash
-sudo apt install jq
-curl -fsSL https://raw.githubusercontent.com/andrewstanbury/claude-statusbar/main/install.sh | bash
-```
-
-> The installer is idempotent and backs up any existing `status.sh` and `settings.json` before changing them.
-
----
-
-## Manual install (any platform)
-
-If you'd rather not pipe a script to bash:
-
-1. Download [`status.sh`](./status.sh) to `~/.claude/status.sh`.
-2. `chmod +x ~/.claude/status.sh`
-3. Add to `~/.claude/settings.json`:
-   ```json
-   {
-     "statusLine": {
-       "type": "command",
-       "command": "bash ~/.claude/status.sh"
-     }
-   }
-   ```
-4. Restart Claude Code (or run `/config`).
-
-On Windows, replace `~/.claude/` with `%USERPROFILE%\.claude\` and use forward slashes in the JSON (`bash /c/Users/you/.claude/status.sh` for Git Bash).
-
----
-
-## Configuration
-
-Open `~/.claude/status.sh` and edit the **Tunables** block near the top:
-
-```bash
-PRICE_IN_PER_MTOK=3      # input price per million tokens (USD)
-PRICE_OUT_PER_MTOK=15    # output price per million tokens (USD)
-COST_BAR_MAX_USD=5       # cost bar saturates here
-```
-
-Defaults match Sonnet 4.x rates. Adjust to match the model you use most.
-
-The advice thresholds (when to suggest `/compact`, `commit`, etc.) live further down in the **Recommendation** section — tweak the score gates to taste.
-
-For the full list of tunables (including price tables for Opus/Haiku, ANSI colour overrides, and manual-test env vars) see [`docs/reference/config.reference.md`](./docs/reference/config.reference.md).
-
----
-
-## Portable Claude config
-
-The [`claude/`](./claude) directory is a portable bundle of global Claude Code customizations, so a freshly-formatted machine can be brought back to the same setup with one command:
-
-```bash
-git clone https://github.com/andrewstanbury/claude-statusbar.git
-bash claude-statusbar/claude/install.sh
-```
-
-`install.sh` **symlinks** the bundle into `~/.claude` (backing up any existing files to `*.bak`), so the repo stays the source of truth — edits you make live in `~/.claude` flow back here through the links. It's idempotent; re-run any time. If a tool ever replaces a symlink with a regular file, just re-run it.
-
-What's included:
-
-| Bundle path | Linked to | What it is |
-|---|---|---|
-| `claude/settings.json` | `~/.claude/settings.json` | permissions, theme, status line, hook wiring |
-| `claude/CLAUDE.md` | `~/.claude/CLAUDE.md` | global instructions |
-| `claude/hooks/*.sh` | `~/.claude/hooks/` | quality/bloat/web-standards guards + nudges, stack-aware lint-on-edit, prompt intent/audit hooks |
-| `claude/skills/<name>` | `~/.claude/skills/` | custom skills |
-| `status.sh` | `~/.claude/status.sh` | this status bar |
-
-> This repo is **public**, so it deliberately contains no secrets and no project-specific/proprietary agents — those stay local-only (see `.gitignore`).
-
----
+Each component's version is **derived from git** — the short hash + date of the last commit that touched its files. `--status` lists installed vs latest and flags `↑ update available`; `--update` (or simply re-running the installer) brings everything current. Staying on the latest is the default. Your selection is remembered in `~/.claude/.claude-statusbar.json`, so updates re-apply exactly the set you chose.
 
 ## Uninstall
 
 ```bash
-# remove the statusLine entry from settings.json (preserves other keys)
-jq 'del(.statusLine)' ~/.claude/settings.json > /tmp/s.json && mv /tmp/s.json ~/.claude/settings.json
-
-# delete the script
-rm ~/.claude/status.sh
+bash uninstall.sh
 ```
 
-Restart Claude Code.
+Removes **only** the symlinks this project created (it never touches your own files, auth, memory, or unrelated hooks/skills) and restores the `settings.json` it backed up at install time — or removes the composed one if you had no prior settings.
 
----
+## Requirements
 
-## Troubleshooting
+| | bash 4+ | jq | git | curl | free (optional) |
+|---|---|---|---|---|---|
+| **Linux** | ✓ default | via pkg mgr | for branch/PR + versioning | ✓ default | ✓ default |
+| **macOS** | via Homebrew[^1] | via Homebrew | via Homebrew/Xcode | ✓ default | n/a (memory shows nothing) |
+| **Windows** | via Git Bash / WSL2 | via Git Bash / WSL2 | ✓ | ✓ | WSL2 only |
 
-**Status bar doesn't appear.** Run `bash ~/.claude/status.sh` manually — if you see output, the script is fine. Check `~/.claude/settings.json` has the `statusLine` block, then restart Claude Code.
+[^1]: macOS ships bash 3.2; the installer and hooks use bash 4+ features, so install a newer bash via Homebrew.
 
-**`jq: command not found`.** See requirements above for your platform.
+## Customization
 
-**`free: command not found` on macOS.** Expected — memory shows `?` on macOS. The bar still works.
-
-**Branch / commit info shows `-` or empty bars.** You're not in a git repo, or there's no upstream/base branch to diff against. Open Claude Code from a repo dir to see git data.
-
-**Windows: `bash: ~/.claude/status.sh: No such file or directory`.** Git Bash translates `~` to your `%USERPROFILE%`. Confirm with `ls ~/.claude/` in Git Bash. If using WSL2, the path is the WSL home, not Windows home — install must be done inside the same environment Claude Code runs in.
-
-**Spinner doesn't animate.** It only advances when Claude Code redraws the status bar (between turns). It's not a true animation — it's a per-render frame index based on epoch seconds.
-
----
+- **Hooks** honor per-feature override env vars (e.g. `CLAUDE_WEB_GUARD_DISABLED=1`, `CLAUDE_STACK_LINT_DISABLED=1`, `CLAUDE_INTENT_CONFIRM_DISABLED=1`) — documented in `claude/CLAUDE.md`.
+- **Status bar** tunables (thresholds, colours, narrow-mode width) live at the top of `status.sh`.
+- **Components** are defined in `claude/components.sh` — the single source of truth the installer and updater both read.
 
 ## License
 
-MIT — do whatever, no warranty.
+Released under the terms in [LICENSE](LICENSE).
