@@ -26,6 +26,13 @@ for d in "$CLAUDE_DIR/status.sh" "$CLAUDE_DIR/CLAUDE.md" \
 done
 ok "removed $n claude-statusbar symlink(s)"
 
+# Old symlink-style install: drop a settings.json that points at claude-statusbar.
+if [ -L "$CLAUDE_DIR/settings.json" ]; then
+  case "$(readlink "$CLAUDE_DIR/settings.json")" in
+    *claude-statusbar*) rm -f "$CLAUDE_DIR/settings.json"; ok "removed settings.json symlink" ;;
+  esac
+fi
+
 # settings.json: prefer restoring the installer's backup; else drop the composed file.
 if [ -f "$CLAUDE_DIR/settings.json.bak" ]; then
   mv "$CLAUDE_DIR/settings.json.bak" "$CLAUDE_DIR/settings.json"
