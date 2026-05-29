@@ -48,7 +48,7 @@ declare -A COMPONENT_LABEL=(
 
 # Repo-relative paths to symlink into ~/.claude (space-separated).
 declare -A COMPONENT_PATHS=(
-  [statusbar]="status.sh"
+  [statusbar]="status.sh claude/hooks/statusbar-advice.sh"
   [instructions]="claude/CLAUDE.md"
   [workflow]="claude/hooks/audit-with-rules.sh claude/hooks/stack-lint.sh"
   [quality-guards]="claude/hooks/quality-guard.sh claude/hooks/pre-edit-guards.sh claude/hooks/pre-bash-guards.sh claude/hooks/pre-read-guards.sh"
@@ -62,6 +62,7 @@ declare -A COMPONENT_PATHS=(
 
 # settings.json hook entries contributed by each component (blank = none).
 declare -A COMPONENT_HOOKS=(
+  [statusbar]="Stop::::statusbar-advice.sh::5"
   [workflow]="UserPromptSubmit::::audit-with-rules.sh::5
 PostToolUse::Edit|Write|MultiEdit::stack-lint.sh::45"
   [quality-guards]="PreToolUse::Edit|Write|MultiEdit::quality-guard.sh::5
