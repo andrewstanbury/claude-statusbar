@@ -1,49 +1,32 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# claude-statusbar — uninstaller
+# claude-statusbar — uninstaller (status bar only)
 # ─────────────────────────────────────────────────────────────────────────────
-# Removes only what this project installed: symlinks in ~/.claude that point at
-# a claude-statusbar checkout (status.sh, CLAUDE.md, hooks/*, skills/*), then
-# restores settings.json from the .bak the installer made (or removes the
-# composed one if there was no prior settings). Never touches your own files,
-# auth, memory, or non-claude-statusbar hooks/skills.
+# Reverses exactly what install.sh did and nothing more:
+#   1. removes the "statusLine" key from ~/.claude/settings.json (jq, in place)
+#   2. removes ~/.claude/status.sh
+#
+# It NEVER touches "hooks" or any other key, so your other tools are left alone.
 #
 # Usage: bash uninstall.sh
+# Requires: jq
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+SETTINGS="$CLAUDE_DIR/settings.json"
+DEST="$CLAUDE_DIR/status.sh"
 G=$'\033[32m'; B=$'\033[1m'; X=$'\033[0m'
 ok() { printf '  %s✓%s %s\n' "$G" "$X" "$1"; }
 
-n=0
-for d in "$CLAUDE_DIR/status.sh" "$CLAUDE_DIR/CLAUDE.md" \
-         "$CLAUDE_DIR"/hooks/*.sh "$CLAUDE_DIR"/hooks/lib/*.sh "$CLAUDE_DIR"/skills/*; do
-  [ -L "$d" ] || continue
-  case "$(readlink "$d")" in
-    *claude-statusbar*) rm -f "$d"; n=$((n+1)) ;;
-  esac
-done
-ok "removed $n claude-statusbar symlink(s)"
+command -v jq >/dev/null || { printf 'jq not found (required)\n' >&2; exit 1; }
 
-# Old symlink-style install: drop a settings.json that points at claude-statusbar.
-if [ -L "$CLAUDE_DIR/settings.json" ]; then
-  case "$(readlink "$CLAUDE_DIR/settings.json")" in
-    *claude-statusbar*) rm -f "$CLAUDE_DIR/settings.json"; ok "removed settings.json symlink" ;;
-  esac
+if [ -e "$DEST" ] || [ -L "$DEST" ]; then rm -f "$DEST"; ok "removed $DEST"; fi
+
+if [ -f "$SETTINGS" ]; then
+  tmp=$(mktemp)
+  jq 'del(.statusLine)' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+  ok "removed statusLine from settings.json (everything else left intact)"
 fi
-
-# settings.json: prefer restoring the installer's backup; else drop the composed file.
-if [ -f "$CLAUDE_DIR/settings.json.bak" ]; then
-  mv "$CLAUDE_DIR/settings.json.bak" "$CLAUDE_DIR/settings.json"
-  ok "restored settings.json from settings.json.bak"
-elif [ -f "$CLAUDE_DIR/settings.json" ] && [ ! -L "$CLAUDE_DIR/settings.json" ]; then
-  rm -f "$CLAUDE_DIR/settings.json"
-  ok "removed composed settings.json"
-fi
-
-rm -f "$CLAUDE_DIR/.claude-statusbar.json"
-# Tidy now-empty dirs we may have created (ignore if non-empty / absent).
-rmdir "$CLAUDE_DIR/hooks/lib" "$CLAUDE_DIR/hooks" "$CLAUDE_DIR/skills" 2>/dev/null || true
 
 printf '\n%sUninstalled.%s Restart Claude Code (or run /config).\n' "$B" "$X"

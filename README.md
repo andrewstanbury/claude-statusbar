@@ -1,47 +1,62 @@
 # claude-statusbar
 
-A portable, **modular** [Claude Code](https://claude.com/claude-code) setup you can drop onto any machine in one command — a rich status bar plus optional quality/workflow **hooks**, **skills**, and global **instructions**. Pick exactly the parts you want, keep each independently versioned, and stay on the latest automatically.
+A single-line status bar for [Claude Code](https://claude.com/claude-code) — and **nothing else**. It reads the JSON that Claude Code pipes to a status-line command and prints one coloured line. It makes **no model calls**, runs **no hooks**, forks nothing in the background, and writes nothing to your config beyond a single `statusLine` key. It cannot interfere with other tools (such as [claude-task-queue](https://github.com/andrewstanbury/claude-task-queue)) because all it ever does is read standard input and print a line.
 
 ```
-● ok  Context: 12%  ▓░░░░░░░  Tokens: ↑52.0k ↓28.0k  Cost: $0.58  Queue: ▶ 4/11 · #5 Wire engine (M)  Branch: feat/x  PR: 42  Web: ⚠ 2  Dirty: 3  Model: sonnet-4-6  Memory: 32%
+⠹ ok  Context: 22% ▓░░░░░░░  Tokens: up 48.2k down 12.0k  Week: 31% (resets 2d)  Branch: feat/x pull request 42  Model: Opus 4.8 [1m]
 ```
 
-## What's in it
+## What it shows
 
-Granularity is "medium" — the status bar, the global instructions, five hook groups, and each skill are individually selectable. Installing **everything is recommended** (and the default).
+Left → right; each slot collapses when its data is absent, and a narrow terminal sheds the lower-priority detail (the bar and the reset countdown):
 
-| Component | What it does |
+| Slot | Meaning |
 |---|---|
-| **Status bar** | Single line: context %, tokens, cost/time, [claude-task-queue](https://github.com/andrewstanbury/claude-task-queue) progress (done/total · mode · current task, always shown — "idle" when empty), git (branch · PR · web-degradation flag · dirty · unpushed · base · lines · stash), model/mode, memory. |
-| **Global instructions** | `CLAUDE.md` — terse-mode default, quality-gate rules, web standards. (Task-management workflow moved to [claude-task-queue](https://github.com/andrewstanbury/claude-task-queue) as of 2026-05-29.) |
-| **Workflow hooks** | `audit-with-rules` (full-project audit on request), `stack-lint` (advisory, stack-aware lint-on-edit). `confirm-intent` is deprecated — see [claude-task-queue](https://github.com/andrewstanbury/claude-task-queue). |
-| **Quality guards** | Block debug code / untested components / untracked TODOs / no-expiry skips; plus pre-edit, pre-bash, and pre-read guards. |
-| **Web standards** | Block (guard) + nudge on HTML a11y/SEO/semantic-nesting issues. |
-| **Dead-code guard** | Block commented-out code blocks; recommend removing unused/duplicated code. |
-| **Session / cost** | Session summary, subagent-cost guard, compaction reminder, re-read tracker. |
-| **Skills** | `caveman`, `grill-me`, `write-a-skill` (each optional). |
+| **Beacon** | An animated glyph that advances once a second; its colour is the overall status severity. |
+| **Status** | One word — `ok` / `elevated` / `high` / `critical` — the worst of context and rate-limit usage. |
+| **Action** | A recommended action, shown only when something needs attention (e.g. *consider compacting soon*). Derived purely from the metrics — zero cost, no model call. |
+| **Context** | Context-window used percent plus a small bar. |
+| **Tokens** | Real session totals — `up` (sent) and `down` (received). |
+| **Week** | Rolling seven-day usage percent and a reset countdown. (Shown only for Pro/Max logins, which report rate limits.) |
+| **Branch** | Current git branch, plus the pull-request number when Claude Code reports one. |
+| **Model** | The model display name. |
+
+> **Note on the "billing cycle".** Claude Code does not expose a calendar-month figure. The **Week** slot is the rolling seven-day rate-limit window, which is the meaningful budget number for Pro/Max plans. Interface-key logins receive no rate-limit fields, so the Week slot is simply omitted for them.
 
 ## Install
 
-```bash
-# Linux / macOS / WSL — requires bash 4+, git, jq
-curl -fsSL https://raw.githubusercontent.com/andrewstanbury/claude-statusbar/main/install.sh | bash
-```
-
-The installer asks **“Install ALL components (recommended)? [Y/n]”** — press Enter for everything, or answer `n` to choose per component. It symlinks the chosen pieces into `~/.claude` and **composes** `~/.claude/settings.json` with only the hooks you selected (plus the status line). Restart Claude Code (or run `/config`) afterwards.
-
-Already have the repo cloned?
+Requires **bash 4+** and **jq**; **git** is optional (used only for the Branch slot).
 
 ```bash
-bash install.sh            # interactive install
-bash install.sh --status   # installed-vs-latest version of each component
-bash install.sh --update   # bring the installed set to latest
-bash uninstall.sh          # clean removal
+git clone https://github.com/andrewstanbury/claude-statusbar.git
+cd claude-statusbar
+bash install.sh
 ```
 
-## Versioning & updates
+The installer does exactly two things and nothing else:
 
-Each component's version is **derived from git** — the short hash + date of the last commit that touched its files. `--status` lists installed vs latest and flags `↑ update available`; `--update` (or simply re-running the installer) brings everything current. Staying on the latest is the default. Your selection is remembered in `~/.claude/.claude-statusbar.json`, so updates re-apply exactly the set you chose.
+1. places `status.sh` at `~/.claude/status.sh` (symlinked from your clone, so edits go live immediately), and
+2. merges a single `statusLine` key into `~/.claude/settings.json`.
+
+It backs up `settings.json` to `settings.json.bak` once, and **never reads or writes your `hooks`** (or any other key). Restart Claude Code (or run `/config`) afterwards.
+
+Prefer to do it by hand? Copy `status.sh` to `~/.claude/status.sh` and add this to `~/.claude/settings.json`:
+
+```json
+"statusLine": { "type": "command", "command": "bash ~/.claude/status.sh", "refreshInterval": 1 }
+```
+
+(`refreshInterval` is in **seconds**; `1` keeps the beacon animating while idle.)
+
+## Update
+
+It is a single script. From your clone:
+
+```bash
+git pull
+```
+
+Because the installer symlinks `status.sh`, a pull is the whole update — no re-install needed. (If you installed without a clone, re-run `bash install.sh` to refresh the copied script.)
 
 ## Uninstall
 
@@ -49,23 +64,20 @@ Each component's version is **derived from git** — the short hash + date of th
 bash uninstall.sh
 ```
 
-Removes **only** the symlinks this project created (it never touches your own files, auth, memory, or unrelated hooks/skills) and restores the `settings.json` it backed up at install time — or removes the composed one if you had no prior settings.
+Removes `~/.claude/status.sh` and deletes **only** the `statusLine` key from `settings.json`. Everything else — your hooks, environment, and other keys — is left exactly as it was.
 
-## Requirements
+## Customize
 
-| | bash 4+ | jq | git | curl | free (optional) |
-|---|---|---|---|---|---|
-| **Linux** | ✓ default | via pkg mgr | for branch/PR + versioning | ✓ default | ✓ default |
-| **macOS** | via Homebrew[^1] | via Homebrew | via Homebrew/Xcode | ✓ default | n/a (memory shows nothing) |
-| **Windows** | via Git Bash / WSL2 | via Git Bash / WSL2 | ✓ | ✓ | WSL2 only |
+Tunables live at the top of `status.sh`:
 
-[^1]: macOS ships bash 3.2; the installer and hooks use bash 4+ features, so install a newer bash via Homebrew.
+- `WARN` / `HIGH` / `CRIT` — the severity thresholds (percent) that drive the status word, the action, and the colours.
+- `NARROW_COLS` — terminal width below which the bar and reset countdown are hidden.
 
-## Customization
+It honours `NO_COLOR` and `TERM=dumb` (plain text, no ANSI codes).
 
-- **Hooks** honor per-feature override env vars (e.g. `CLAUDE_WEB_GUARD_DISABLED=1`, `CLAUDE_STACK_LINT_DISABLED=1`, `CLAUDE_INTENT_CONFIRM_DISABLED=1`) — documented in `claude/CLAUDE.md`.
-- **Status bar** tunables (thresholds, colours, narrow-mode width) live at the top of `status.sh`.
-- **Components** are defined in `claude/components.sh` — the single source of truth the installer and updater both read.
+## Distribution note
+
+Claude Code plugins **cannot** ship a `statusLine` — it only takes effect from user or project `settings.json`. So there is no way to "install" a status bar without that one settings entry; this repo keeps that entry as small and surgical as possible.
 
 ## License
 

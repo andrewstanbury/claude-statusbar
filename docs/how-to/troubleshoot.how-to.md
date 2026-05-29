@@ -1,28 +1,26 @@
 # Troubleshoot
 
-Expansion of the README's Troubleshooting section. Symptom → cause → fix.
+Symptom → cause → fix.
 
 ## Status bar doesn't appear at all
 
-1. **Run the script directly to see if it works:**
+1. **Run the script directly:**
    ```bash
-   bash ~/.claude/status.sh
+   bash ~/.claude/status.sh < /dev/null
    ```
-   If you see one line of mostly-coloured output, the script is fine.
+   One line of mostly-coloured output means the script is fine.
 
-2. **Check `~/.claude/settings.json` has the `statusLine` block:**
+2. **Check the `statusLine` key exists:**
    ```bash
    jq '.statusLine' ~/.claude/settings.json
    ```
-   Expected: `{ "type": "command", "command": "bash ~/.claude/status.sh" }` (or similar with absolute path on Windows).
+   Expected: `{ "type": "command", "command": "bash /…/.claude/status.sh", "refreshInterval": 1 }`.
 
-3. **Restart Claude Code.** Settings changes only apply on launch.
-
-4. **Check if Claude Code's status bar is enabled** in your `/config`. Some early versions had it off by default.
+3. **Restart Claude Code** (or run `/config`). Settings changes apply on launch.
 
 ## `jq: command not found`
 
-The script depends on `jq` to parse the JSON Claude Code sends on stdin. Install it:
+The script needs `jq` to parse the JSON on stdin. Install it:
 
 | OS | Command |
 |---|---|
@@ -30,73 +28,41 @@ The script depends on `jq` to parse the JSON Claude Code sends on stdin. Install
 | Fedora/RHEL | `sudo dnf install jq` |
 | Arch | `sudo pacman -S jq` |
 | macOS | `brew install jq` |
-| Windows (Chocolatey) | `choco install jq` |
 | Windows (Scoop) | `scoop install jq` |
-| Windows (manual) | Download `jq.exe` from [jqlang.org/download](https://jqlang.org/download/) and put it on `PATH` |
 
-## `free: command not found` on macOS
+## Branch slot is missing
 
-Expected. macOS doesn't ship the `free` command. The Mem section will show `?` instead of a percentage. Everything else still works.
+You are not running Claude Code from inside a git repository, or `git` is not installed. The branch slot is detected with `git rev-parse` against the working directory and is simply omitted when there is no repo. Everything else still renders.
 
-If you want a real number on macOS, replace the `MEM_PCT=` line with:
+## Week slot is missing
+
+The seven-day rate-limit figure only exists for **Pro/Max logins**, and only after the first request of a session. Interface-key logins receive no `rate_limits` field, so the Week slot is omitted for them by design — there is no calendar-month figure to show instead.
+
+## The beacon doesn't animate
+
+The frame is `(date +%s) % 10`, so it advances when Claude Code re-runs the script. With `refreshInterval: 1` in the `statusLine` config it advances about once a second even while idle. If yours is frozen, confirm the interval is set:
 
 ```bash
-MEM_PCT=$(top -l 1 -n 0 | awk '/PhysMem/ { print int($8 / ($2 + $4 + $6 + $8) * 100) }')
+jq '.statusLine.refreshInterval' ~/.claude/settings.json   # should print 1
 ```
 
-(Untested — adjust to your `top` output format.)
+## The recommended action is wrong or annoying
 
-## Branch / commit info shows `-` or empty bars
-
-You're not running Claude Code from inside a git repo, or your branch has no upstream/base to diff against.
-
-The script:
-- Detects the repo via `git rev-parse --is-inside-work-tree`.
-- Computes the commit bar from the diff against `main` or `master` (whichever exists).
-- If neither is found, the diff is empty → empty bar.
-
-Open Claude Code from a repo directory to see git data populate.
+The action is chosen by a priority cascade in the `# ── Recommended action ──` block of `status.sh`, gated by `WARN` / `HIGH` / `CRIT` (top of the script). It is empty below `HIGH`. To make it quieter, raise `HIGH`/`CRIT`; to change the wording or order, edit the inline conditions. See [`../reference/config.reference.md`](../reference/config.reference.md).
 
 ## Windows: `bash: ~/.claude/status.sh: No such file or directory`
 
-Git Bash translates `~` to your `%USERPROFILE%`. WSL2 translates it to the WSL home (different filesystem). Whichever environment Claude Code is running in must be the one where you installed.
+Git Bash and WSL2 resolve `~` to different home directories. Install under the same environment Claude Code runs in:
 
 ```bash
-# Confirm the file exists in your Git Bash environment:
-ls ~/.claude/
-
-# In WSL2, check the actual path:
-echo "$HOME/.claude/"
-ls "$HOME/.claude/"
+ls ~/.claude/            # Git Bash
+ls "$HOME/.claude/"      # WSL2
 ```
 
-If Claude Code runs under one and you installed under the other, run the install script under the right shell.
+## It changed my settings.json — what did it touch?
 
-## Spinner doesn't animate
-
-It's not a true animation. The frame is `(epoch_seconds % N)` — it advances only when Claude Code redraws the bar (between turns). If you sit idle, the spinner sits idle too.
-
-If you want a real ticker, you'd need to drive it from outside the script (e.g., a watcher process that touches a file every 100ms and reads the frame from there). Out of scope for this tool.
-
-## Cost shows wildly wrong numbers
-
-The cost is *estimated* — the script doesn't see the real per-message billing. It's based on a 65/35 input/output split applied to total tokens-used, multiplied by the configured per-MTok prices.
-
-Override the prices in the Tunables block at the top of `status.sh` to match your actual model:
+Only the `statusLine` key. The installer backs the file up to `settings.json.bak` on first install, and the uninstaller runs `jq 'del(.statusLine)'` — your `hooks` and every other key are never read or written. Compare against the backup if you want to confirm:
 
 ```bash
-PRICE_IN_PER_MTOK=15     # Opus 4.x
-PRICE_OUT_PER_MTOK=75
+diff <(jq 'del(.statusLine)' ~/.claude/settings.json) ~/.claude/settings.json.bak
 ```
-
-See [`../reference/config.reference.md`](../reference/config.reference.md) for the full price table.
-
-## Recommendation chip is wrong/annoying
-
-The recommendation is the highest-priority item from a small priority-scored set: `/compact`, `commit your changes`, `git push`, `start a new session`, `all clear`. Tweak the score gates inline in the `# ── Recommendation ──` section of `status.sh`.
-
-There's no central config — edit the literals. Common tweaks:
-
-- Less frequent `/compact` reminder: raise the context-percentage threshold.
-- Suppress `commit your changes` for big-change branches: lower the diff-line threshold.
-- Suppress `git push` if you push infrequently: comment out the unpushed-commits priority block.
