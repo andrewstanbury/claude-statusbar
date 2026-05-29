@@ -304,9 +304,18 @@ TQ_DONE=0; TQ_TOTAL=0; TQ_ID=""; TQ_SUBJ=""; TQ_EST=""
 TQ_GLYPH="▶"; TQ_GLYPH_COL="$C"; TQ_MODE=""; TQ_MODE_COL="$D"; TQ_PAUSED=0
 if command -v sha1sum &>/dev/null; then
   TQ_DIR="${CLAUDE_TQ_STATE_DIR:-$HOME/.claude/state/task-queue}"
-  TQ_KEY=$(printf '%s' "$CWD" | sha1sum | cut -c1-12)
+  # Dual-read: claude-task-queue keys its queue by the git repo root (with a
+  # cwd fallback). Prefer the repo-root key here, but fall back to a cwd key so
+  # we also find pre-existing cwd-keyed queues and stay correct no matter which
+  # repo merges its keying change first.
+  TQ_KEY=""
+  for _tq_base in "${REPO_ROOT:-}" "$CWD"; do
+    [ -n "$_tq_base" ] || continue
+    _tq_k=$(printf '%s' "$_tq_base" | sha1sum | cut -c1-12)
+    if [ -s "$TQ_DIR/$_tq_k.jsonl" ]; then TQ_KEY="$_tq_k"; break; fi
+  done
   TQ_FILE="$TQ_DIR/$TQ_KEY.jsonl"
-  if [ -s "$TQ_FILE" ]; then
+  if [ -n "$TQ_KEY" ] && [ -s "$TQ_FILE" ]; then
     IFS=$'\t' read -r TQ_DONE TQ_TOTAL TQ_ID TQ_SUBJ TQ_EST <<<"$(jq -rs '
         . as $all
         | ($all | map(select(.status=="completed"))            | length) as $done
