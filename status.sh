@@ -13,7 +13,7 @@
 #   4. Tokens        ↑in ↓out (estimated 65/35 split)
 #   5. Cost · Time   real cost from stdin; session elapsed
 #   5b. Queue        claude-task-queue: glyph · done/total · mode · current task
-#                    (only when the project has a queue; plugin optional)
+#                    (always shown — "idle" when empty; plugin optional)
 #   6. Repo          Branch[⎇] · PR · Web · Dirty · Unpushed · Behind · Base↑↓ · Lines · Stash · EAS
 #   7. Model         · Mode (non-default) · Style (non-default)
 #   8. System        Memory
@@ -398,7 +398,9 @@ printf "${D}Cost:${X} ${COST_COL}${COST_BOLD}%s${X}" "$COST_STR"
 [ "$NARROW" -eq 0 ] && [ -n "$SESSION_STR" ] && printf " ${D}Time:${X} ${C}%s${X}" "$SESSION_STR"
 printf "${GSEP}"
 
-# 5b) Task queue (claude-task-queue) — glyph · done/total · mode · current task
+# 5b) Task queue (claude-task-queue) — ALWAYS shown (queue-first workflow): the
+# queue is a permanent fixture so it's visible even when empty. Populated:
+# glyph · done/total · mode · current task. Empty: a dim "idle".
 if [ "$TQ_TOTAL" -gt 0 ]; then
   printf "${D}Queue:${X} ${TQ_GLYPH_COL}${B}%s${X} ${C}${B}%s/%s${X}" "$TQ_GLYPH" "$TQ_DONE" "$TQ_TOTAL"
   [ -n "$TQ_MODE" ] && printf " ${TQ_MODE_COL}%s${X}" "$TQ_MODE"
@@ -407,8 +409,10 @@ if [ "$TQ_TOTAL" -gt 0 ]; then
     printf " ${D}·${X} ${C}#%s${X} %s" "$TQ_ID" "$sub"
     [ -n "$TQ_EST" ] && printf " ${D}(%s)${X}" "$TQ_EST"
   fi
-  printf "${GSEP}"
+else
+  printf "${D}Queue:${X} ${D}idle${X}"
 fi
+printf "${GSEP}"
 
 # 6) Repo group
 if [ -n "$REPO_ROOT" ]; then
