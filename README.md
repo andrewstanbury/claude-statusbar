@@ -3,7 +3,7 @@
 A portable, **modular** [Claude Code](https://claude.com/claude-code) setup you can drop onto any machine in one command — a rich status bar plus optional quality/workflow **hooks**, **skills**, and global **instructions**. Pick exactly the parts you want, keep each independently versioned, and stay on the latest automatically.
 
 ```
-● ok  Context: 12%  ▓░░░░░░░  Tokens: ↑52.0k ↓28.0k  Cost: $0.58  Branch: feat/x  PR: 42  Web: ⚠ 2  Dirty: 3  Model: sonnet-4-6  Memory: 32%
+● ok  Context: 12%  ▓░░░░░░░  Tokens: ↑52.0k ↓28.0k  Cost: $0.58  Queue: ▶ 4/11 · #5 Wire engine (M)  Branch: feat/x  PR: 42  Web: ⚠ 2  Dirty: 3  Model: sonnet-4-6  Memory: 32%
 ```
 
 ## What's in it
@@ -12,7 +12,7 @@ Granularity is "medium" — the status bar, the global instructions, five hook g
 
 | Component | What it does |
 |---|---|
-| **Status bar** | Single line: context %, tokens, cost/time, git (branch · PR · web-degradation flag · dirty · unpushed · base · lines · stash), model/mode, memory. |
+| **Status bar** | Single line: context %, tokens, cost/time, [claude-task-queue](https://github.com/andrewstanbury/claude-task-queue) progress (done/total · mode · current task, always shown — "idle" when empty), git (branch · PR · web-degradation flag · dirty · unpushed · base · lines · stash), model/mode, memory. |
 | **Global instructions** | `CLAUDE.md` — terse-mode default, quality-gate rules, web standards. (Task-management workflow moved to [claude-task-queue](https://github.com/andrewstanbury/claude-task-queue) as of 2026-05-29.) |
 | **Workflow hooks** | `audit-with-rules` (full-project audit on request), `stack-lint` (advisory, stack-aware lint-on-edit). `confirm-intent` is deprecated — see [claude-task-queue](https://github.com/andrewstanbury/claude-task-queue). |
 | **Quality guards** | Block debug code / untested components / untracked TODOs / no-expiry skips; plus pre-edit, pre-bash, and pre-read guards. |

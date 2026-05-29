@@ -12,6 +12,8 @@
 #   3. Context       % + bar (8-cell mini bar)
 #   4. Tokens        ↑in ↓out (estimated 65/35 split)
 #   5. Cost · Time   real cost from stdin; session elapsed
+#   5b. Queue        claude-task-queue: glyph · done/total · mode · current task
+#                    (only when the project has a queue; plugin optional)
 #   6. Repo          Branch[⎇] · PR · Web · Dirty · Unpushed · Behind · Base↑↓ · Lines · Stash · EAS
 #   7. Model         · Mode (non-default) · Style (non-default)
 #   8. System        Memory
@@ -292,6 +294,48 @@ if command -v free &>/dev/null; then
 fi
 MEM_COL=$(pct_color "$MEM_PCT")
 
+# ── Task queue (claude-task-queue plugin) ────────────────────────────────────
+# Surfaces the durable, project-scoped work queue when the plugin is installed
+# and this project has a queue. Cheap: one jq fork over a small jsonl file.
+# Honors the plugin's CLAUDE_TQ_STATE_DIR override and its sha1(cwd)[:12] key,
+# and mirrors its tq_next selection (in_progress first, else first unblocked
+# pending) so the bar shows the same "current task" the assistant works on.
+TQ_DONE=0; TQ_TOTAL=0; TQ_ID=""; TQ_SUBJ=""; TQ_EST=""
+TQ_GLYPH="▶"; TQ_GLYPH_COL="$C"; TQ_MODE=""; TQ_MODE_COL="$D"; TQ_PAUSED=0
+if command -v sha1sum &>/dev/null; then
+  TQ_DIR="${CLAUDE_TQ_STATE_DIR:-$HOME/.claude/state/task-queue}"
+  # Dual-read: claude-task-queue keys its queue by the git repo root (with a
+  # cwd fallback). Prefer the repo-root key here, but fall back to a cwd key so
+  # we also find pre-existing cwd-keyed queues and stay correct no matter which
+  # repo merges its keying change first.
+  TQ_KEY=""
+  for _tq_base in "${REPO_ROOT:-}" "$CWD"; do
+    [ -n "$_tq_base" ] || continue
+    _tq_k=$(printf '%s' "$_tq_base" | sha1sum | cut -c1-12)
+    if [ -s "$TQ_DIR/$_tq_k.jsonl" ]; then TQ_KEY="$_tq_k"; break; fi
+  done
+  TQ_FILE="$TQ_DIR/$TQ_KEY.jsonl"
+  if [ -n "$TQ_KEY" ] && [ -s "$TQ_FILE" ]; then
+    IFS=$'\t' read -r TQ_DONE TQ_TOTAL TQ_ID TQ_SUBJ TQ_EST <<<"$(jq -rs '
+        . as $all
+        | ($all | map(select(.status=="completed"))            | length) as $done
+        | ($all | length)                                                 as $total
+        | ($all | map(select(.status=="completed" or .status=="cancelled") | .id)) as $resolved
+        | ( ($all | map(select(.status=="in_progress")) | first)
+            // ( $all | map(select(.status=="pending"))
+                      | map(select((.blockedBy // []) - $resolved | length == 0))
+                      | first ) ) as $cur
+        | [ $done, $total, ($cur.id // ""), ($cur.subject // ""), ($cur.est // "") ]
+        | @tsv' "$TQ_FILE" 2>/dev/null)"
+    TQ_DONE="${TQ_DONE:-0}"; TQ_TOTAL="${TQ_TOTAL:-0}"
+    if [ -f "$TQ_DIR/$TQ_KEY.pause" ]; then
+      TQ_GLYPH="⏸"; TQ_GLYPH_COL="$Y"; TQ_MODE="paused"; TQ_MODE_COL="$Y"; TQ_PAUSED=1
+    elif [ -f "$TQ_DIR/$TQ_KEY.autopilot" ]; then
+      TQ_MODE="auto"; TQ_MODE_COL="$G"
+    fi
+  fi
+fi
+
 # ── Advice (severity-scored; highest wins) ───────────────────────────────────
 ADVICE=""; ADVICE_SCORE=0; ADVICE_COL="$G"
 
@@ -313,6 +357,7 @@ fi
 [ "$TO_PULL" -ge 1 ]                                      && set_advice 30 "git pull" "$Y"
 [ "$MEM_PCT" -ge "$MEM_CRIT" ]                            && set_advice 85 "free memory" "$R"
 [ "$WEB_ISSUES" -gt 0 ]                                  && set_advice 78 "fix web a11y/SEO (${WEB_ISSUES})" "$R"
+[ "$TQ_PAUSED" -eq 1 ] && [ "$TQ_TOTAL" -gt "$TQ_DONE" ] && set_advice 35 "tq resume" "$Y"
 
 # ── Verdict beacon (worst severity across all axes) ──────────────────────────
 WORST=0
@@ -352,6 +397,18 @@ COST_BOLD=""; [ -z "$ADVICE" ] && COST_BOLD="$B"
 printf "${D}Cost:${X} ${COST_COL}${COST_BOLD}%s${X}" "$COST_STR"
 [ "$NARROW" -eq 0 ] && [ -n "$SESSION_STR" ] && printf " ${D}Time:${X} ${C}%s${X}" "$SESSION_STR"
 printf "${GSEP}"
+
+# 5b) Task queue (claude-task-queue) — glyph · done/total · mode · current task
+if [ "$TQ_TOTAL" -gt 0 ]; then
+  printf "${D}Queue:${X} ${TQ_GLYPH_COL}${B}%s${X} ${C}${B}%s/%s${X}" "$TQ_GLYPH" "$TQ_DONE" "$TQ_TOTAL"
+  [ -n "$TQ_MODE" ] && printf " ${TQ_MODE_COL}%s${X}" "$TQ_MODE"
+  if [ "$NARROW" -eq 0 ] && [ -n "$TQ_ID" ]; then
+    sub="$TQ_SUBJ"; [ "${#sub}" -gt 28 ] && sub="${sub:0:27}…"
+    printf " ${D}·${X} ${C}#%s${X} %s" "$TQ_ID" "$sub"
+    [ -n "$TQ_EST" ] && printf " ${D}(%s)${X}" "$TQ_EST"
+  fi
+  printf "${GSEP}"
+fi
 
 # 6) Repo group
 if [ -n "$REPO_ROOT" ]; then
