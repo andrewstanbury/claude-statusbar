@@ -20,7 +20,7 @@
 # Install (settings.json):
 #   { "statusLine": { "type": "command",
 #                     "command": "bash ~/.claude/status.sh",
-#                     "refreshInterval": 1000 } }
+#                     "refreshInterval": 1 } }   # seconds
 #   refreshInterval keeps the spinner ticking once/sec even while idle.
 #
 # Requires: bash 4+, jq. Optional: git. Honors NO_COLOR and TERM=dumb.
