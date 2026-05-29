@@ -44,20 +44,23 @@ mkdir -p "$DIR" 2>/dev/null || exit 0
 # Generate in the background so the Stop hook returns immediately.
 (
   # Recent plain-text turns (user + assistant) from the transcript tail.
+  # Collapse ALL whitespace (incl. newlines) to spaces BEFORE the global cap,
+  # so the prompt is genuinely bounded — a per-line cut would let it balloon and
+  # blow the model timeout.
   ctx=$(tail -n 80 "$TRANSCRIPT" 2>/dev/null | jq -rs '
         map(select(.message.content != null)
             | .message.content
             | if type == "array"
               then (map(select(.type == "text") | .text) | join(" "))
               else tostring end)
-        | map(select(length > 0)) | .[-12:] | join("\n")' 2>/dev/null \
-        | tr -s ' \t\r' ' ' | cut -c1-4000)
+        | map(select(length > 0)) | .[-8:] | join(" ")' 2>/dev/null \
+        | tr -s ' \t\r\n' ' ' | cut -c1-2000)
   [ -n "$ctx" ] || exit 0
 
   read -r -d '' prompt <<EOF
-You are watching a developer's coding session for SCOPE CREEP and OVER-ENGINEERING of local changes.
+You watch a developer's coding session for SCOPE CREEP and OVER-ENGINEERING of local changes.
 
-Reply with ONE short imperative (max 8 words, no quotes, no trailing period) telling them the simplest next move — e.g. ship the simple version / commit before adding more / stop gold-plating one change at a time / split this into smaller PRs.
+Reply with ONE imperative clause ONLY — max 8 words, no question mark, no period, no quotes — naming the simplest next move. Examples: ship the simple version / commit before adding more / stop gold-plating, one change at a time / split this into smaller PRs.
 
 If the work is already appropriately scoped and focused, reply EXACTLY: on track
 
@@ -67,7 +70,7 @@ EOF
 
   advice=$(CLAUDE_STATUSBAR_ADVICE_DISABLED=1 CLAUDE_INTENT_CONFIRM_DISABLED=1 \
            CLAUDE_AUDIT_RULES_DISABLED=1 CLAUDE_STACK_LINT_DISABLED=1 \
-           timeout 25 claude -p "$prompt" --model haiku 2>/dev/null \
+           timeout 45 claude -p "$prompt" --model haiku 2>/dev/null \
            | head -n1 | tr -d '"' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | cut -c1-48)
 
   case "$(printf '%s' "$advice" | tr '[:upper:]' '[:lower:]')" in
