@@ -36,7 +36,7 @@ COMPONENT_ORDER=(
 declare -A COMPONENT_LABEL=(
   [statusbar]="Status bar (status.sh + statusLine)"
   [instructions]="Global instructions (CLAUDE.md)"
-  [workflow]="Workflow hooks — confirm-intent, audit-with-rules, stack-lint"
+  [workflow]="Workflow hooks — audit-with-rules, stack-lint (confirm-intent deprecated: see github.com/andrewstanbury/claude-task-queue)"
   [quality-guards]="Quality guards — quality-guard + pre-edit/bash/read guards"
   [web-standards]="Web standards — guard (blocks) + nudge"
   [dead-code]="Dead-code guard (pre block + post recommend)"
@@ -50,7 +50,7 @@ declare -A COMPONENT_LABEL=(
 declare -A COMPONENT_PATHS=(
   [statusbar]="status.sh"
   [instructions]="claude/CLAUDE.md"
-  [workflow]="claude/hooks/confirm-intent.sh claude/hooks/audit-with-rules.sh claude/hooks/stack-lint.sh"
+  [workflow]="claude/hooks/audit-with-rules.sh claude/hooks/stack-lint.sh"
   [quality-guards]="claude/hooks/quality-guard.sh claude/hooks/pre-edit-guards.sh claude/hooks/pre-bash-guards.sh claude/hooks/pre-read-guards.sh"
   [web-standards]="claude/hooks/web-standards-guard.sh claude/hooks/web-standards-nudge.sh claude/hooks/lib/web-standards-checks.sh"
   [dead-code]="claude/hooks/deadcode.sh"
@@ -62,8 +62,7 @@ declare -A COMPONENT_PATHS=(
 
 # settings.json hook entries contributed by each component (blank = none).
 declare -A COMPONENT_HOOKS=(
-  [workflow]="UserPromptSubmit::::confirm-intent.sh::5
-UserPromptSubmit::::audit-with-rules.sh::5
+  [workflow]="UserPromptSubmit::::audit-with-rules.sh::5
 PostToolUse::Edit|Write|MultiEdit::stack-lint.sh::45"
   [quality-guards]="PreToolUse::Edit|Write|MultiEdit::quality-guard.sh::5
 PreToolUse::Edit|Write|MultiEdit::pre-edit-guards.sh::5

@@ -12,9 +12,9 @@ Granularity is "medium" — the status bar, the global instructions, five hook g
 
 | Component | What it does |
 |---|---|
-| **Status bar** | Single line: context %, tokens, cost/time, [claude-task-queue](https://github.com/andrewstanbury/claude-task-queue) progress (done/total · mode · current task, when a queue exists), git (branch · PR · web-degradation flag · dirty · unpushed · base · lines · stash), model/mode, memory. |
-| **Global instructions** | `CLAUDE.md` — terse-mode default, quality-gate rules, web standards, and the confirm-intent task-management workflow (restate → prioritized tasks with time estimates → per-task approval/pacing). |
-| **Workflow hooks** | `confirm-intent`, `audit-with-rules` (full-project audit on request), `stack-lint` (advisory, stack-aware lint-on-edit). |
+| **Status bar** | Single line: context %, tokens, cost/time, [claude-task-queue](https://github.com/andrewstanbury/claude-task-queue) progress (done/total · mode · current task, always shown — "idle" when empty), git (branch · PR · web-degradation flag · dirty · unpushed · base · lines · stash), model/mode, memory. |
+| **Global instructions** | `CLAUDE.md` — terse-mode default, quality-gate rules, web standards. (Task-management workflow moved to [claude-task-queue](https://github.com/andrewstanbury/claude-task-queue) as of 2026-05-29.) |
+| **Workflow hooks** | `audit-with-rules` (full-project audit on request), `stack-lint` (advisory, stack-aware lint-on-edit). `confirm-intent` is deprecated — see [claude-task-queue](https://github.com/andrewstanbury/claude-task-queue). |
 | **Quality guards** | Block debug code / untested components / untracked TODOs / no-expiry skips; plus pre-edit, pre-bash, and pre-read guards. |
 | **Web standards** | Block (guard) + nudge on HTML a11y/SEO/semantic-nesting issues. |
 | **Dead-code guard** | Block commented-out code blocks; recommend removing unused/duplicated code. |
