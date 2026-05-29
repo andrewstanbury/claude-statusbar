@@ -149,6 +149,48 @@ BRANCH_NAME=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null)
 if [ "$BRANCH_NAME" = "HEAD" ]; then
   BRANCH_NAME="@$(git -C "$CWD" rev-parse --short HEAD 2>/dev/null)"
 fi
+REPO_ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null)
+
+# ── Task queue (claude-task-queue plugin) ────────────────────────────────────
+# Surfaces the durable, project-scoped work queue when the plugin is installed
+# and this project has a queue. Cheap: one jq fork over a small jsonl file.
+# Honors the plugin's CLAUDE_TQ_STATE_DIR override and its sha1(key)[:12] file,
+# and mirrors its tq_next selection (in_progress first, else first unblocked
+# pending) so the bar shows the same "current task" the assistant works on.
+TQ_DONE=0; TQ_TOTAL=0; TQ_ID=""; TQ_SUBJ=""; TQ_EST=""
+TQ_GLYPH="▶"; TQ_GLYPH_COL="$C"; TQ_MODE=""; TQ_MODE_COL="$D"; TQ_PAUSED=0
+if command -v sha1sum &>/dev/null; then
+  TQ_DIR="${CLAUDE_TQ_STATE_DIR:-$HOME/.claude/state/task-queue}"
+  # Dual-read: claude-task-queue keys its queue by git repo root (with a cwd
+  # fallback). Prefer the repo-root key, but fall back to a cwd key so we find
+  # cwd-keyed queues too (v0.1.1 keys by cwd) — correct no matter which wins.
+  TQ_KEY=""
+  for _tq_base in "${REPO_ROOT:-}" "$CWD"; do
+    [ -n "$_tq_base" ] || continue
+    _tq_k=$(printf '%s' "$_tq_base" | sha1sum | cut -c1-12)
+    if [ -s "$TQ_DIR/$_tq_k.jsonl" ]; then TQ_KEY="$_tq_k"; break; fi
+  done
+  TQ_FILE="$TQ_DIR/$TQ_KEY.jsonl"
+  if [ -n "$TQ_KEY" ] && [ -s "$TQ_FILE" ]; then
+    IFS=$'\t' read -r TQ_DONE TQ_TOTAL TQ_ID TQ_SUBJ TQ_EST <<<"$(jq -rs '
+        . as $all
+        | ($all | map(select(.status=="completed"))            | length) as $done
+        | ($all | length)                                                 as $total
+        | ($all | map(select(.status=="completed" or .status=="cancelled") | .id)) as $resolved
+        | ( ($all | map(select(.status=="in_progress")) | first)
+            // ( $all | map(select(.status=="pending"))
+                      | map(select((.blockedBy // []) - $resolved | length == 0))
+                      | first ) ) as $cur
+        | [ $done, $total, ($cur.id // ""), ($cur.subject // ""), ($cur.est // "") ]
+        | @tsv' "$TQ_FILE" 2>/dev/null)"
+    TQ_DONE="${TQ_DONE:-0}"; TQ_TOTAL="${TQ_TOTAL:-0}"
+    if [ -f "$TQ_DIR/$TQ_KEY.pause" ]; then
+      TQ_GLYPH="⏸"; TQ_GLYPH_COL="$Y"; TQ_MODE="paused"; TQ_MODE_COL="$Y"; TQ_PAUSED=1
+    elif [ -f "$TQ_DIR/$TQ_KEY.autopilot" ]; then
+      TQ_MODE="auto"; TQ_MODE_COL="$G"
+    fi
+  fi
+fi
 
 # ── Advice (rendered from cache; written by the advice hook — PR2) ───────────
 ADVICE=""
@@ -199,6 +241,22 @@ if [ -n "$BRANCH_NAME" ]; then
   [ -n "$PR_NUM" ] && [ "$PR_NUM" != "null" ] && printf " ${D}PR:${X} ${C}${B}%s${X}" "$PR_NUM"
   printf "${GSEP}"
 fi
+
+# 6b) Task queue (claude-task-queue) — ALWAYS shown (queue-first workflow): the
+# queue is a permanent fixture so it's visible even when empty. Populated:
+# glyph · done/total · mode · current task. Empty: a dim "idle".
+if [ "$TQ_TOTAL" -gt 0 ]; then
+  printf "${D}Queue:${X} ${TQ_GLYPH_COL}${B}%s${X} ${C}${B}%s/%s${X}" "$TQ_GLYPH" "$TQ_DONE" "$TQ_TOTAL"
+  [ -n "$TQ_MODE" ] && printf " ${TQ_MODE_COL}%s${X}" "$TQ_MODE"
+  if [ "$NARROW" -eq 0 ] && [ -n "$TQ_ID" ]; then
+    sub="$TQ_SUBJ"; [ "${#sub}" -gt 28 ] && sub="${sub:0:27}…"
+    printf " ${D}·${X} ${C}#%s${X} %s" "$TQ_ID" "$sub"
+    [ -n "$TQ_EST" ] && printf " ${D}(%s)${X}" "$TQ_EST"
+  fi
+else
+  printf "${D}Queue:${X} ${D}idle${X}"
+fi
+printf "${GSEP}"
 
 # 7) Model
 printf "${D}Model:${X} ${C}%s${X}" "$SHORT_MODEL"

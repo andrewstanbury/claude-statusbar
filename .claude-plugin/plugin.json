@@ -1,0 +1,13 @@
+{
+  "name": "statusbar",
+  "displayName": "Claude Status Bar",
+  "description": "Single-line status bar: context %, real session up/down tokens, weekly rate-limit usage with reset countdown, branch + PR, model, and a throttled one-line anti-over-engineering recommendation. Version is derived from git (every commit = a new version, auto-updated).",
+  "author": {
+    "name": "Andrew Stanbury",
+    "email": "andrewstanbury62@gmail.com"
+  },
+  "homepage": "https://github.com/andrewstanbury/claude-statusbar",
+  "repository": "https://github.com/andrewstanbury/claude-statusbar",
+  "license": "MIT",
+  "keywords": ["statusline", "status-bar", "tokens", "rate-limit", "monitoring"]
+}
