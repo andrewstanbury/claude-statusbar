@@ -1,0 +1,14 @@
+{
+  "name": "claude-statusbar",
+  "owner": {
+    "name": "Andrew Stanbury",
+    "email": "andrewstanbury62@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "statusbar",
+      "source": "./",
+      "description": "Single-line Claude Code status bar — context %, real session up/down tokens, weekly rate-limit usage, branch + PR, model, plus a throttled anti-over-engineering advice line. Reads native statusLine metrics; no gh/transcript hacks."
+    }
+  ]
+}
