@@ -7,7 +7,7 @@ These docs supplement the README with deeper reference and explanation. They fol
 | Folder | Purpose |
 |---|---|
 | [`reference/config.reference.md`](./reference/config.reference.md) | Every tunable in `status.sh`, what it does, what valid values are |
-| [`how-to/troubleshoot.how-to.md`](./how-to/troubleshoot.how-to.md) | Specific failure modes + fixes (expanded from the README) |
+| [`how-to/troubleshoot.how-to.md`](./how-to/troubleshoot.how-to.md) | Specific failure modes + fixes |
 | [`explanation/how-it-works.explanation.md`](./explanation/how-it-works.explanation.md) | What the script actually does on each invocation — useful when modifying it |
 
 ## AI agents

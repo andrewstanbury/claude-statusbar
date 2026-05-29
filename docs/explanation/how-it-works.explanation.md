@@ -4,66 +4,44 @@ What the script actually does on each invocation. Useful when modifying it.
 
 ## Lifecycle
 
-Claude Code calls `bash ~/.claude/status.sh` between turns. The script:
+Claude Code runs `bash ~/.claude/status.sh` whenever it redraws the status line — and, because the install sets `refreshInterval: 1`, roughly once a second while idle (that is what animates the beacon). The script:
 
-1. **Reads JSON from stdin.** Claude Code passes `{ model, contextTokensUsed, maxContextTokens, ... }`. The script extracts what it needs via `jq`.
-2. **Reads env-var overrides.** `CLAUDE_MODEL`, `CLAUDE_CONTEXT_TOKENS_USED`, `CLAUDE_MAX_CONTEXT_TOKENS` win over the JSON values — used for manual testing.
-3. **Computes derived values:**
-   - Context percentage (`tokens_used / tokens_max * 100`)
-   - Cost estimate (`input_tokens * input_price + output_tokens * output_price`)
-   - Cost percentage of `COST_BAR_MAX_USD` for the bar fill
-   - Git diff line count (vs `main`/`master`)
-   - Uncommitted/unpushed change counts
-   - Memory usage percentage (Linux/WSL only)
-4. **Picks one recommendation** from a priority-scored set.
+1. **Reads JSON from stdin.** Claude Code pipes a status-line object containing `model`, `context_window`, `rate_limits`, `pr`, `workspace`, and more. Everything is extracted in a **single `jq` call**, with `// default` per field; an empty stdin falls back to `{}`.
+2. **Applies the one env override.** `CLAUDE_MODEL` wins over the model in the JSON (handy for testing).
+3. **Computes derived values:** context percent (clamped to 100), the worst severity across context and both rate-limit windows, the seven-day reset countdown, the short model name, and the current git branch.
+4. **Picks one recommended action** from a small priority cascade (empty when healthy).
 5. **Renders one line** of ANSI-coloured output to stdout.
 
-Stdout is what Claude Code shows in the status bar. Stderr is silently dropped — failures are graceful (the section shows `?` or `-`).
+Stdout is the status line. There is no stderr handling to worry about because the script never calls anything risky — a missing `git` or a non-repo directory just drops the branch slot.
 
-## Section breakdown
+## Slot breakdown
 
 ```
-⠙  OK     all clear   sonnet-4-6   Tokens: ↑52.0k ↓28.0k   Cost: $0.58   Branch: feat/x   Commit: [██░░░]   Size: [█░░░░]   Mem: 32%
-↑  ↑      ↑           ↑            ↑                       ↑             ↑                ↑                  ↑              ↑
-1  2      3           4            5                       6             7                8                  9              10
+⠹ ok  consider compacting soon  Context: 78% ▓▓▓▓▓▓░░  Tokens: up 52.0k down 28.0k  Week: 31% (resets 2d)  Branch: feat/x pull request 42  Model: sonnet-4-6
+↑ ↑   ↑                         ↑                       ↑                            ↑                      ↑
+1 2   3                         4                       5                            6                      7
 ```
 
-| # | Section | Source |
+| # | Slot | Source |
 |---|---|---|
-| 1 | Spinner frame | `(epoch_seconds % 10)` indexed into a 10-frame braille spinner |
-| 2 | Level | `OK` / `WARN` / `HIGH` / `CRITICAL` based on context percentage |
-| 3 | Recommendation | Highest-priority chip — see below |
-| 4 | Model | Short form, e.g., `sonnet-4-6` from `claude-sonnet-4-6-20251015` |
-| 5 | Tokens | `↑input ↓output`, formatted to k/M (input estimated as 65% of total) |
-| 6 | Cost | USD estimate based on `PRICE_IN_PER_MTOK` + `PRICE_OUT_PER_MTOK` |
-| 7 | Branch | Current git branch, or empty if not in a repo |
-| 8 | Commit bar | Uncommitted-changes bar (5 chars, fills based on line-count) |
-| 9 | Size bar | Branch size (lines diff vs base), 5 chars |
-| 10 | Memory | `(used / total) * 100`, Linux/WSL only via `free` |
+| 1 | Beacon | `(date +%s) % 10` indexed into a 10-frame braille spinner; colour = overall severity |
+| 2 | Status | `ok` / `elevated` / `high` / `critical` from the worst signal |
+| 3 | Action | The recommended action (only when one fires) |
+| 4 | Context | `context_window.used_percentage` + an 8-cell bar |
+| 5 | Tokens | `context_window.total_input_tokens` / `total_output_tokens`, formatted to k/M |
+| 6 | Week | `rate_limits.seven_day.used_percentage` + reset countdown (Pro/Max only) |
+| 7 | Branch + model | `git rev-parse` + native `pr.number`; `model.display_name` |
 
-## Recommendation priority
+## Severity and the recommended action
 
-The recommendation chip is chosen from a scored set. Roughly (highest priority first):
-
-1. **`start a new session`** — context > 90% AND cost > saturation
-2. **`/compact`** — context > 75%
-3. **`commit your changes`** — diff > N lines uncommitted
-4. **`git push`** — N commits ahead of upstream
-5. **`/compact`** (lower threshold) — context > 50%
-6. **`all clear`** — fallback when nothing else fires
-
-The score gates are literals inline — see [`how-to/troubleshoot.how-to.md`](../how-to/troubleshoot.how-to.md#recommendation-chip-is-wrongannoying) for tuning.
+Severity is `max(context%, five_hour%, seven_day%)`, banded by `WARN` / `HIGH` / `CRIT`. The action is a single string chosen by priority: context-critical → rate-limit-critical → context-high → rate-limit-high, and empty below `HIGH`. Because a status line cannot see your code, the action is **resource-focused** (compact, slow down, pause) rather than code-aware — there is no model call, so it costs nothing and adds no latency.
 
 ## Why bash + jq, not Python or Node
 
-- **Cold-start time matters.** The script runs between every turn. Python takes ~50ms to start, Node ~80ms. Bash is ~5ms.
-- **Zero deps to manage.** `bash` and `jq` are baseline-installable on every platform Claude Code runs on. No `pip install`, no `npm install`, no version manager dance.
-- **Single file.** Easy to inspect, easy to fork.
+- **Cold-start time matters.** The script runs about once a second. Bash starts in ~5 ms; Python ~50 ms; Node ~80 ms.
+- **Zero dependencies to manage.** `bash` and `jq` are baseline on every platform Claude Code runs on.
+- **Single file.** Easy to inspect, easy to fork, installs to one known path.
 
-The trade-off: the script is harder to read than the equivalent Python. Inline `awk`, `sed`, and `printf` for math/formatting. Comments help; the structure is consistent (gather → compute → render).
+## Why it is only a status bar
 
-## Why one file, not modules
-
-Same reason as bash-vs-Python: cold start. Sourcing extra bash files adds milliseconds. Keeping everything in one file is faster and easier to install (one `curl` to a known path).
-
-Trade-off: 200+ lines in one file. Mitigated by clear section dividers (`# ── Section ──`).
+Earlier versions of this project also installed hooks, skills, and global instructions, and the installer recomposed your whole `settings.json`. That made the status bar capable of disturbing other tools (it could drop another tool's hooks on update). The rewrite removed all of that: the script only reads stdin and prints a line, and the installer only ever touches the `statusLine` key. The narrow scope is the feature — it is what makes the bar safe to run alongside anything else.

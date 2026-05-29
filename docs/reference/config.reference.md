@@ -2,67 +2,50 @@
 
 Every tunable in [`status.sh`](../../status.sh). Edit in place at the top of the script.
 
-## Tunables (lines 38-40)
+## Tunables
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `PRICE_IN_PER_MTOK` | `3` | USD cost per 1M input tokens. Default matches Sonnet 4.x rates. |
-| `PRICE_OUT_PER_MTOK` | `15` | USD cost per 1M output tokens. Default matches Sonnet 4.x rates. |
-| `COST_BAR_MAX_USD` | `5` | Cost bar saturates here. Higher = more sensitive bar. |
+| `WARN` | `50` | Percent at/above which status becomes `elevated` (yellow). |
+| `HIGH` | `75` | Percent at/above which status becomes `high` (red) and the recommended action appears. |
+| `CRIT` | `90` | Percent at/above which status becomes `critical` and the action escalates (e.g. *pause*). |
+| `NARROW_COLS` | `100` | Terminal width (columns) below which low-priority detail — the context bar and the week reset countdown — is hidden. |
 
-If you mostly use Opus or Haiku, override:
+The three thresholds apply to all three measured signals: context-window usage, the rolling five-hour rate-limit window, and the rolling seven-day window. The overall status is the worst of them.
 
-```bash
-# Opus 4.x rates
-PRICE_IN_PER_MTOK=15
-PRICE_OUT_PER_MTOK=75
+## ANSI colours
 
-# Haiku 4.x rates
-PRICE_IN_PER_MTOK=1
-PRICE_OUT_PER_MTOK=5
-```
-
-## ANSI colours (lines 43-49)
-
-The script uses standard 8-colour ANSI escapes. Override if your terminal handles them oddly:
+Standard 8-colour ANSI escapes. Override if your terminal handles them oddly. They become empty strings when `NO_COLOR` is set or `TERM=dumb`.
 
 | Variable | Default | Used for |
 |---|---|---|
-| `R` | red | CRITICAL level, expensive cost |
-| `Y` | yellow | WARN/HIGH level, moderate cost |
-| `G` | green | OK level, cheap |
-| `C` | cyan | model name, recommendation chip |
-| `B` | bold | section emphasis |
-| `D` | dim | separators, secondary text |
-| `X` | reset | end of escape sequence |
+| `R` | red | high / critical severity |
+| `Y` | yellow | elevated severity, the recommended action |
+| `G` | green | ok severity |
+| `C` | cyan | labels' values (tokens, branch, model) |
+| `B` | bold | emphasis |
+| `D` | dim | slot labels and separators |
+| `X` | reset | end of an escape sequence |
 
-## Manual-test env vars
+## Manual testing
 
-The script accepts these env vars as overrides for the JSON payload Claude Code provides on stdin. Useful for testing the bar without launching Claude Code:
-
-| Variable | Purpose |
-|---|---|
-| `CLAUDE_MODEL` | Override the detected model (e.g., `claude-sonnet-4-6`) |
-| `CLAUDE_CONTEXT_TOKENS_USED` | Override the current context-window usage |
-| `CLAUDE_MAX_CONTEXT_TOKENS` | Override the model's context-window cap |
-
-Test invocation:
+The script reads its data from the JSON on stdin, so pipe a sample object to test any state without launching Claude Code:
 
 ```bash
-CLAUDE_MODEL=claude-sonnet-4-6 \
-CLAUDE_CONTEXT_TOKENS_USED=80000 \
-CLAUDE_MAX_CONTEXT_TOKENS=200000 \
-bash status.sh
+echo '{"model":{"display_name":"Opus 4.8 [1m]"},
+       "context_window":{"used_percentage":82,"total_input_tokens":900000,"total_output_tokens":140000},
+       "rate_limits":{"seven_day":{"used_percentage":60,"resets_at":1900000000},"five_hour":{"used_percentage":30}},
+       "pr":{"number":42}}' | bash status.sh
 ```
 
-## Recommendation thresholds (further down in the script)
+`CLAUDE_MODEL` is the one env override still honoured (it wins over the model in the JSON); everything else comes from stdin.
 
-The script picks one recommendation chip per render based on a priority-scored set of conditions: `/compact` when context is high, `commit your changes` when there are uncommitted changes, `git push` when ahead of upstream, `start a new session` when cost is excessive, etc.
+## Recommended-action gates
 
-To tweak the gates, edit the score thresholds in the `# ── Recommendation ──` section. There's no centralised config block — adjust the literal values inline.
+The action string is chosen by a small priority cascade in the `# ── Recommended action ──` block — context-critical first, then the rate-limit windows, then the "soon" tier at `HIGH`. There is no separate config block; adjust the inline conditions there if you want different wording or ordering. The action is empty when everything is healthy, so it never nags.
 
-## What's NOT configurable
+## What is NOT configurable
 
-- **The bar layout.** Sections always appear in the same order: spinner | level | recommendation | model | tokens | cost | git | memory.
-- **Section visibility.** All sections render unconditionally; if data is unavailable (e.g., not in a git repo) the section shows `-` or empty bars rather than disappearing.
-- **Refresh interval.** The bar re-renders only when Claude Code redraws it (between turns). It's not a live ticker.
+- **The slot order.** Beacon · status · action · context · tokens · week · branch · model, always in that order.
+- **A config file.** All tuning is inline at the top of `status.sh` by design — it keeps install and uninstall to one file and one settings key.
+- **A live ticker.** The bar re-renders when Claude Code redraws it; with `refreshInterval: 1` that is about once a second, which is what animates the beacon.
